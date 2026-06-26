@@ -337,14 +337,6 @@ Main Thread (asyncio event loop)
 | Microphone | Any | Built-in or USB |
 | Speakers/Headphones | Any | For audio output |
 
-### Already on this system
-- ✅ Python 3.13 (Miniconda3 at `C:\Users\izzulgod\miniconda3\`)
-- ✅ Git 2.53
-- ✅ CMake 4.3.3
-- ✅ VS 2018 BuildTools
-- ✅ `Qwen3-0.6B-Q8_0.gguf` — LLM #1 model
-- ✅ `gemma-3-1b-it-Q8_0.gguf` — LLM #2 model
-
 ---
 
 ## 7. Installation Guide
