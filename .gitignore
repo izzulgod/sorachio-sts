@@ -1,0 +1,83 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv
+venv
+ENV
+env.bak
+venv.bak
+.pytest_cache/
+.coverage
+.cache
+.pytest_cache/
+
+# Local configuration / env vars
+.env
+.env.*
+secrets.yaml
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Project-specific builds & binaries
+bin/*
+.build/
+.repos/
+
+# Model Files (GGUF, GGML, ONNX, Checkpoints)
+# These are extremely large and should not be pushed to GitHub
+models/llm1/*.gguf
+models/llm2/*.gguf
+models/stt/*.bin
+models/stt/*.onnx
+# Or keep folder structure but ignore all models:
+models/**/*
+# But do not ignore the directory structure itself:
+!models/
+!models/llm1/
+!models/llm2/
+!models/stt/
+
+# Run-time databases & data
+data/memory/ltm.json
+data/memory/*
+!data/
+!data/memory/
+
+# System logs
+logs/*
+*.log
+!logs/
+
+# IDE/Editor config
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+.gemini/
+.agents/

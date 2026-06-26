@@ -1,0 +1,150 @@
+# =============================================================================
+# Sorachio-STS Master Configuration
+# Local-First AI Desktop Companion System
+# =============================================================================
+
+system:
+  name: "Sorachio"
+  version: "0.1.0"
+  log_level: "INFO"          # DEBUG | INFO | WARNING | ERROR
+  log_dir: "logs"
+  data_dir: "data"
+
+# =============================================================================
+# Audio Configuration
+# =============================================================================
+audio:
+  capture:
+    sample_rate: 16000        # Hz — whisper.cpp requires 16kHz
+    channels: 1               # Mono
+    chunk_duration_ms: 30     # VAD frame size
+    device_index: null        # null = system default
+    silence_timeout_ms: 800   # Silence before STT trigger
+    vad_aggressiveness: 2     # 0-3, higher = more aggressive
+    min_speech_duration_ms: 500
+    max_speech_duration_s: 30
+
+  playback:
+    sample_rate: 24000        # Kokoro native output rate
+    channels: 1
+    dtype: "float32"
+    device_index: null        # null = system default
+    buffer_size: 2048
+
+# =============================================================================
+# STT Configuration (whisper.cpp)
+# =============================================================================
+stt:
+  binary_path: "bin/whisper-cli.exe"   # Path to whisper.cpp CLI binary
+  model_path: "models/stt/ggml-base.en.bin"
+  language: "en"
+  threads: 4
+  beam_size: 5
+  no_timestamps: true
+  word_timestamps: false
+  temperature: 0.0
+  timeout_s: 10.0
+
+# =============================================================================
+# LLM Configuration
+# =============================================================================
+llm:
+  # LLM #1 — Cognitive Gateway (Qwen3-0.6B)
+  cognitive_gateway:
+    server_url: "http://127.0.0.1:8001"
+    model_path: "models/llm1/Qwen3-0.6B-Q8_0.gguf"
+    n_ctx: 1024
+    n_threads: 6
+    n_gpu_layers: 0            # Set >0 for GPU offload
+    temperature: 0.1           # Low temp for consistent JSON
+    max_tokens: 128
+    timeout_s: 15.0            
+    server_port: 8001
+
+  # LLM #2 — Personality Core (gemma-3-1b-it)
+  personality_core:
+    server_url: "http://127.0.0.1:8002"
+    model_path: "models/llm2/gemma-3-1b-it-Q8_0.gguf"
+    n_ctx: 4096
+    n_threads: 6
+    n_gpu_layers: 0
+    temperature: 0.75
+    max_tokens: 512
+    top_p: 0.95
+    repeat_penalty: 1.1
+    timeout_s: 60.0            
+    server_port: 8002
+
+  # llama-server binary
+  server_binary: "bin/llama-server.exe"
+
+# =============================================================================
+# TTS Configuration (Kokoro)
+# =============================================================================
+tts:
+  voice: "af_heart"           # Kokoro voice ID
+  speed: 1.0
+  sample_rate: 24000
+  lang: "a"
+  split_pattern: null         # null = use built-in chunking
+
+# =============================================================================
+# Memory Configuration
+# =============================================================================
+memory:
+  short_term:
+    max_messages: 20           # Rolling window size
+    include_emotions: true
+    summary_threshold: 15      # Summarize when > N messages
+
+  long_term:
+    storage_path: "data/memory/ltm.json"
+    max_entries: 500
+    importance_threshold: 0.5  # Only store if importance >= this
+    retrieval_top_k: 5         # Top K memories to retrieve
+    keyword_weight: 0.6
+    recency_weight: 0.4
+
+# =============================================================================
+# Context Manager Configuration
+# =============================================================================
+context:
+  max_stm_in_prompt: 10       # How many STM messages to include
+  max_ltm_in_prompt: 3        # How many LTM memories to include
+  include_emotional_state: true
+  companion_name: "Sorachio"
+  personality_prompt: |
+    You are Sorachio, a warm, curious, and emotionally intelligent AI companion.
+    You speak naturally and conversationally, like a close friend who genuinely
+    cares. You are attentive, empathetic, and always present. You remember
+    details about the person you're speaking with and reference them naturally.
+    Keep responses concise and spoken-word friendly — avoid markdown, lists,
+    or long paragraphs. Speak as if talking, not writing.
+
+# =============================================================================
+# Chunk Assembler Configuration
+# =============================================================================
+chunker:
+  min_words: 3
+  max_words: 30
+  sentence_endings: [".", "!", "?", ";", "..."]
+  flush_on_comma: false        # true = flush on commas too
+  flush_timeout_s: 2.0        # Flush incomplete chunks after N seconds
+
+# =============================================================================
+# Queue Configuration
+# =============================================================================
+queues:
+  stt_queue_maxsize: 5
+  cognitive_queue_maxsize: 5
+  tts_chunk_queue_maxsize: 10
+  audio_playback_queue_maxsize: 20
+
+# =============================================================================
+# Pipeline Configuration
+# =============================================================================
+pipeline:
+  enable_interruption: false
+  interruption_vad_aggressiveness: 3  # More aggressive during playback
+  startup_greeting: true
+  startup_message: "Hello! I'm Sorachio, your AI companion. I'm ready to chat."

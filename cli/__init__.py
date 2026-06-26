@@ -1,0 +1,1 @@
+"""Sorachio-STS CLI package."""
