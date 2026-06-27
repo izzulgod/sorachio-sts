@@ -303,7 +303,7 @@ class MasterBootstrapGuardian:
 
     def _build_binary(self, name: str, config: dict) -> None:
         """Build a single binary."""
-        binary_path = BIN_DIR / name
+        binary_path = self._get_binary_path(name)
         repo_path = REPOS_DIR / config["repo"]
         
         # Check if binary is valid
@@ -344,11 +344,12 @@ class MasterBootstrapGuardian:
             check=True
         )
         
-        # Copy binary
+        # Copy binary — handle .exe suffix on Windows
+        exe_suffix = ".exe" if os.name == "nt" else ""
         if name == "llama-server":
-            src_bin = build_dir / "bin" / "llama-server"
+            src_bin = build_dir / "bin" / f"llama-server{exe_suffix}"
         else:  # whisper-cli
-            src_bin = build_dir / "bin" / "main"
+            src_bin = build_dir / "bin" / f"main{exe_suffix}"
         
         if src_bin.exists():
             shutil.copy(src_bin, binary_path)
@@ -356,35 +357,42 @@ class MasterBootstrapGuardian:
         else:
             log.warning(f"Could not find {name} binary after build")
 
+    def _get_binary_path(self, name: str) -> Path:
+        """Return platform-correct binary path (.exe on Windows)."""
+        if os.name == "nt":
+            return BIN_DIR / f"{name}.exe"
+        return BIN_DIR / name
+
     def _is_binary_valid(self, binary_path: Path, check_args: list[str]) -> bool:
-        """Check if a binary exists, has correct architecture, and is functional."""
+        """Check if a binary exists and is functional."""
         if not binary_path.exists():
             return False
-        
-        # Check architecture
-        try:
-            result = subprocess.run(
-                ["file", str(binary_path)],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            if self.current_arch not in result.stdout:
-                log.warning(f"Architecture mismatch for {binary_path.name}")
-                return False
-        except subprocess.CalledProcessError:
-            return False
-        
+
+        # Skip 'file' command on Windows (Unix-only tool).
+        # On Unix, optionally verify architecture.
+        if os.name != "nt":
+            try:
+                result = subprocess.run(
+                    ["file", str(binary_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0 and self.current_arch not in result.stdout:
+                    log.warning(f"Architecture mismatch for {binary_path.name}")
+                    return False
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass  # 'file' not available, skip arch check
+
         # Check functionality
         try:
             subprocess.run(
                 [str(binary_path)] + check_args,
                 capture_output=True,
-                check=True
+                timeout=10,
             )
             return True
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
             return False
 
     def _download_models(self) -> None:
@@ -435,7 +443,7 @@ class MasterBootstrapGuardian:
         print()
         print("  Binaries:")
         for name in BINARIES:
-            path = BIN_DIR / name
+            path = self._get_binary_path(name)
             status = "✓" if path.exists() else "✗"
             print(f"    {status} {name}")
         
