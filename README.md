@@ -327,7 +327,7 @@ Choose the path that matches your operating system.
 
 ---
 
-### 🪟 Path A — Windows (Pre-built Binaries)
+### Path A — Windows (Pre-built Binaries)
 
 > Easiest setup. No compiler required.
 
@@ -393,7 +393,7 @@ MBG runs automatically on first launch and handles everything else:
 
 ---
 
-### 🐧🍎 Path B — Linux / macOS (Build from Source)
+### Path B — Linux / macOS (Build from Source)
 
 > Fully automated. MBG builds everything for you.
 
@@ -495,7 +495,7 @@ python mbg.py --build
 
 ## 8. Running the System
 
-### Quick Start -- Text Mode (no microphone required)
+### Quick Start - Text Mode (no microphone required)
 
 ```bash
 # Run in text mode (MBG auto-runs on first launch)
