@@ -240,6 +240,8 @@ class MasterBootstrapGuardian:
             "typer>=0.12.0",
             "python-dotenv",
             "structlog",
+            "kokoro>=0.9.2",
+            "misaki[en]",         # kokoro G2P engine (English phonemizer)
         ]
         
         log.info(f"Installing {len(deps)} packages...")
