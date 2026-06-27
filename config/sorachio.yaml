@@ -35,7 +35,7 @@ audio:
 # STT Configuration (whisper.cpp)
 # =============================================================================
 stt:
-  binary_path: "bin/whisper-cli"   # Path to whisper.cpp CLI binary (platform-specific extension added automatically)
+  binary_path: "bin/whisper-cli"   # .exe suffix added automatically on Windows by settings.py
   model_path: "models/stt/ggml-base.en.bin"
   language: "en"
   threads: 4
@@ -75,8 +75,8 @@ llm:
     timeout_s: 60.0            
     server_port: 8002
 
-  # llama-server binary
-  server_binary: "bin/llama-server"
+  # llama-server binary — omit here; platform-correct path (.exe on Windows)
+  # is set automatically by settings.py
 
 # =============================================================================
 # TTS Configuration (Kokoro)
