@@ -47,7 +47,7 @@ In text mode, you can chat with the companion using keyboard inputs. This mode i
 
 Sorachio-STS is a **complete, local-first, real-time Speech-to-Speech (STS) AI Companion** system. It runs entirely on your local machine — no cloud APIs, no subscriptions, no data sent anywhere.
 
-The system is designed from the ground up as a **scalable AI companion operating system** — not a toy chatbot — with architecture that anticipates future expansion into robotics, multi-agent systems, cameras, sensors, and ROS2 integration.
+The system is designed from the ground up as a **scalable AI companion operating system** — with architecture that anticipates future expansion into robotics, multi-agent systems, cameras, sensors, and ROS2 integration.
 
 ### Key Properties
 
