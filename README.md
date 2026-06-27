@@ -29,18 +29,17 @@ In text mode, you can chat with the companion using keyboard inputs. This mode i
 3. [Data Flow](#3-data-flow)
 4. [Folder Structure](#4-folder-structure)
 5. [Threading Model](#5-threading-model)
-6. [Prerequisites](#6-prerequisites)
-7. [Quick Start](#7-quick-start)
-8. [Model Setup](#8-model-setup)
-9. [Running the System](#9-running-the-system)
-10. [Configuration Guide](#10-configuration-guide)
-11. [Cognitive Gateway Explained](#11-cognitive-gateway-explained)
-12. [Streaming Pipeline Explained](#12-streaming-pipeline-explained)
-13. [Memory Architecture](#13-memory-architecture)
-14. [CLI Reference](#14-cli-reference)
-15. [MBG System](#15-mbg-system)
-16. [Troubleshooting](#16-troubleshooting)
-17. [Future Robotics Expansion](#17-future-robotics-expansion)
+6. [Installation](#6-installation)
+7. [Model Setup](#7-model-setup)
+8. [Running the System](#8-running-the-system)
+9. [Configuration Guide](#9-configuration-guide)
+10. [Cognitive Gateway Explained](#10-cognitive-gateway-explained)
+11. [Streaming Pipeline Explained](#11-streaming-pipeline-explained)
+12. [Memory Architecture](#12-memory-architecture)
+13. [CLI Reference](#13-cli-reference)
+14. [MBG System](#14-mbg-system)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Future Robotics Expansion](#16-future-robotics-expansion)
 
 ---
 
@@ -270,9 +269,9 @@ Sorachio-STS/
 |   +-- llm2/               # gemma-3-1b-it-Q8_0.gguf
 |   +-- stt/                # ggml-base.en.bin
 |
-+-- bin/                    # Built binaries (auto-created by MBG)
-|   +-- llama-server
-|   +-- whisper-cli
++-- bin/                    # Binaries (place pre-built binaries here)
+|   +-- llama-server        # llama-server (llama-server.exe on Windows)
+|   +-- whisper-cli         # whisper-cli (whisper-cli.exe on Windows)
 |
 +-- data/
 |   +-- memory/
@@ -322,63 +321,159 @@ Main Thread (asyncio event loop)
 
 ---
 
-## 6. Prerequisites
+## 6. Installation
 
-### Required
-| Tool | Version | Notes |
-|------|---------|-------|
-| Python | 3.10 - 3.12 | MBG auto-detects and relaunches with compatible version |
-| Git | Any | For cloning repositories |
-| CMake | 3.20+ | For building llama.cpp and whisper.cpp |
-
-### Optional
-| Tool | Purpose |
-|------|---------|
-| Microphone | For voice mode |
-| Speakers/Headphones | For audio output |
-| GPU (CUDA/Metal) | For faster LLM inference |
+Choose the path that matches your operating system.
 
 ---
 
-## 7. Quick Start
+### 🪟 Path A — Windows (Pre-built Binaries)
 
-### One-Command Setup
+> Easiest setup. No compiler required.
 
-The **MBG: Master Bootstrap Guardian** system handles everything automatically — all setup runs before the app starts:
+#### Step 1 — Install Python 3.10–3.12
 
-```bash
-# Full setup (auto-installs dependencies, builds binaries, downloads models)
-python main.py --help
+Download from [python.org](https://www.python.org/downloads/). During installation, **check "Add Python to PATH"**.
+
+Verify:
+```powershell
+python --version
 ```
 
-### What MBG Does Automatically
+#### Step 2 — Install espeak-ng
 
-1. **Python Version Check** - Detects and relaunches with compatible Python (3.10-3.12)
-2. **Virtual Environment** - Creates and manages `venv_runtime/`
-3. **Dependencies** - Installs all required packages
-4. **Binary Compilation** - Builds llama.cpp and whisper.cpp
-5. **Model Downloads** - Downloads STT and LLM models
-6. **Platform Detection** - Handles macOS, Linux, and Windows
+Kokoro TTS requires espeak-ng for English phoneme conversion.
 
-### Useful Commands
+1. Download the latest installer from the [espeak-ng releases page](https://github.com/espeak-ng/espeak-ng/releases) — get the `.msi` file
+2. Run the installer
+3. Verify it is on your PATH:
+```powershell
+espeak-ng --version
+```
+
+#### Step 3 — Download Pre-built Binaries
+
+Download and place the following files into the `bin/` folder of the project:
+
+| File | Download from |
+|------|--------------|
+| `llama-server.exe` | [llama.cpp releases](https://github.com/ggerganov/llama.cpp/releases) → latest `llama-*-bin-win-*.zip` → extract `llama-server.exe` |
+| `whisper-cli.exe` | [whisper.cpp releases](https://github.com/ggerganov/whisper.cpp/releases) → latest `whisper-*-bin-win-*.zip` → extract `whisper-cli.exe` |
+
+Also copy any `.dll` files from the same zip archives into `bin/` — they are required for the executables to run.
+
+Your `bin/` folder should look like this:
+```
+bin/
++-- llama-server.exe
++-- whisper-cli.exe
++-- ggml.dll
++-- llama.dll
++-- ... (other .dll files from the zip)
+```
+
+#### Step 4 — Clone and Run
+
+```powershell
+git clone https://github.com/izzulgod/sorachio-sts.git
+cd sorachio-sts
+
+#Voice mode
+python main.py run
+
+#Text mode
+python main.py text
+```
+
+MBG runs automatically on first launch and handles everything else:
+- Creates `venv_runtime/` virtual environment
+- Installs all Python packages (including `kokoro` and `misaki[en]`)
+- Downloads AI models (~1.8GB total)
+- Detects your binaries in `bin/`
+
+---
+
+### 🐧🍎 Path B — Linux / macOS (Build from Source)
+
+> Fully automated. MBG builds everything for you.
+
+#### Step 1 — Install Python 3.10–3.12
+
+**macOS:**
+```bash
+brew install python@3.12
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt install python3.12 python3.12-venv
+```
+
+#### Step 2 — Install Git and CMake
+
+**macOS:**
+```bash
+brew install git cmake
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt install git cmake build-essential
+```
+
+#### Step 3 — Clone and Run
 
 ```bash
-# Check system status
-python main.py --check
+git clone https://github.com/izzulgod/sorachio-sts.git
+cd sorachio-sts
 
-# Force rebuild everything
-python main.py --force
+#Voice mode
+python main.py run
+
+#Text mode
+python main.py text
+```
+
+MBG runs automatically on first launch and handles everything else:
+- Creates `venv_runtime/` virtual environment
+- Installs all Python packages (including `kokoro`)
+- Clones and compiles `llama.cpp` and `whisper.cpp` into `bin/`
+- Downloads AI models (~1.8GB total)
+
+> First run takes 5–15 minutes due to model downloads and compilation.
+
+---
+
+### What MBG Does Automatically (All Platforms)
+
+Once prerequisites are in place, every subsequent step is handled by MBG:
+
+| Step | Automatic? |
+|------|-----------|
+| Create virtual environment | ✓ Always |
+| Install Python packages | ✓ Always |
+| Download AI models | ✓ Always |
+| Detect pre-built binaries | ✓ Always |
+| Build binaries from source | ✓ Linux/macOS only |
+| Install espeak-ng | ✗ Manual (Windows) |
+
+### MBG Commands
+
+```bash
+# Check system status (verify everything is detected correctly)
+python mbg.py --check
+
+# Force reinstall dependencies and re-download models
+python mbg.py --force
 
 # Download models only
-python main.py --models
+python mbg.py --models
 
-# Build binaries only
-python main.py --build
+# Build binaries from source only
+python mbg.py --build
 ```
 
----
-
-## 8. Model Setup
+## 7. Model Setup
 
 ### LLM Models (Auto-downloaded by MBG)
 
@@ -398,7 +493,7 @@ python main.py --build
 
 ---
 
-## 9. Running the System
+## 8. Running the System
 
 ### Quick Start -- Text Mode (no microphone required)
 
@@ -422,7 +517,7 @@ python main.py text -m "Hello Sorachio, how are you?"
 
 ---
 
-## 10. Configuration Guide
+## 9. Configuration Guide
 
 All configuration lives in `config/sorachio.yaml`.
 
@@ -469,7 +564,7 @@ export SORACHIO_LOG_LEVEL=DEBUG
 
 ---
 
-## 11. Cognitive Gateway Explained
+## 10. Cognitive Gateway Explained
 
 **LLM #1** (Qwen3-0.6B) acts as a fast routing and filtering brain. It **never generates conversation** -- only makes structured decisions.
 
@@ -527,7 +622,7 @@ This reduces latency from ~3s to ~0.3s for the cognitive decision.
 
 ---
 
-## 12. Streaming Pipeline Explained
+## 11. Streaming Pipeline Explained
 
 Sorachio begins **speaking before it finishes thinking**. Here's how:
 
@@ -563,7 +658,7 @@ Chunks are assembled by:
 
 ---
 
-## 13. Memory Architecture
+## 12. Memory Architecture
 
 ### Short-Term Memory (STM)
 
@@ -597,7 +692,7 @@ The LTM is designed for easy migration to ChromaDB, FAISS, or Qdrant. Each `LTME
 
 ---
 
-## 14. CLI Reference
+## 13. CLI Reference
 
 ```bash
 # Full voice mode
@@ -626,7 +721,7 @@ python main.py memory clear [--yes]
 
 ---
 
-## 15. MBG System
+## 14. MBG System
 
 ### What is MBG?
 
@@ -634,39 +729,38 @@ python main.py memory clear [--yes]
 
 ### Features
 
-- **Python Version Management** - Auto-detects and relaunches with compatible Python
-- **Virtual Environment** - Creates and manages isolated Python environment
-- **Dependency Installation** - Installs all required packages
-- **Binary Compilation** - Builds llama.cpp and whisper.cpp from source
+- **Python Version Management** - Auto-detects and relaunches with compatible Python (3.10–3.12)
+- **Virtual Environment** - Creates and manages `venv_runtime/` isolated from your system Python
+- **Dependency Installation** - Installs all required packages including `kokoro` and `misaki[en]` for TTS
+- **Binary Detection** - Validates existing binaries (handles `.exe` automatically on Windows); builds from source if not found
 - **Model Downloads** - Downloads all required AI models
-- **Platform Detection** - Handles macOS, Linux, and Windows
-- **Architecture Verification** - Ensures binaries match system architecture
+- **Platform Detection** - Handles macOS, Linux, and Windows transparently
 
 ### Usage
 
 ```bash
 # Check system status
-python main.py --check
+python mbg.py --check
 
 # Force rebuild everything
-python main.py --force
+python mbg.py --force
 
 # Download models only
-python main.py --models
+python mbg.py --models
 
 # Build binaries only
-python main.py --build
+python mbg.py --build
 
 # Show version
-python main.py --version
+python mbg.py --version
 ```
 
-### What Gets Built
+### What Gets Built (or detected if pre-built)
 
-| Component | Source | Output |
-|-----------|--------|--------|
-| llama-server | llama.cpp | `bin/llama-server` |
-| whisper-cli | whisper.cpp | `bin/whisper-cli` |
+| Component | Source | Output (Linux/macOS) | Output (Windows) |
+|-----------|--------|----------------------|------------------|
+| llama-server | llama.cpp | `bin/llama-server` | `bin/llama-server.exe` |
+| whisper-cli | whisper.cpp | `bin/whisper-cli` | `bin/whisper-cli.exe` |
 
 ### What Gets Downloaded
 
@@ -678,28 +772,38 @@ python main.py --version
 
 ---
 
-## 16. Troubleshooting
+## 15. Troubleshooting
 
 ### "Python version outside compatible range"
 
 MBG will automatically try to find and relaunch with a compatible Python version (3.10-3.12). If it can't find one, install Python 3.12:
 - **macOS**: `brew install python@3.12`
 - **Linux**: `sudo apt install python3.12`
-- **Windows**: Download from python.org
+- **Windows**: Download from [python.org](https://python.org)
 
-### "Binary not found"
+### "Binary not found" / Binaries show ✗ in status
 
-Run MBG to build the missing binary:
+On Windows, binaries must have the `.exe` extension. MBG detects this automatically. If you placed binaries in `bin/` manually, ensure they are named `llama-server.exe` and `whisper-cli.exe`. MBG will detect them on the next run:
+
 ```bash
-python main.py
+python mbg.py --check
 ```
 
-### "No module named 'sounddevice'"
+If you want to use pre-built releases instead of building from source:
+1. Download `llama-server.exe` from [llama.cpp releases](https://github.com/ggerganov/llama.cpp/releases)
+2. Download `whisper-cli.exe` from [whisper.cpp releases](https://github.com/ggerganov/whisper.cpp/releases)
+3. Place both in the `bin/` folder
+4. Run `python mbg.py --check` to verify
 
-MBG should install this automatically. If not:
+### "No module named 'kokoro'" / TTS not working
+
+This means kokoro was not installed into the project's virtual environment. Run MBG to reinstall all dependencies into `venv_runtime/`:
+
 ```bash
-pip install sounddevice
+python mbg.py
 ```
+
+On Windows, Kokoro also requires **espeak-ng** for the English phonemizer. Download and install it from the [espeak-ng releases page](https://github.com/espeak-ng/espeak-ng/releases), then ensure it is on your system PATH before running.
 
 ### "LLM server not responding"
 
@@ -723,12 +827,6 @@ pip install sounddevice
 - Verify LLM #1 is running: `curl http://127.0.0.1:8001/health`
 - The `/no_think` prefix in the system prompt disables Qwen3 reasoning mode
 - Try increasing `max_tokens` in config if response is getting cut off
-
-### "TTS not working"
-
-- Kokoro is optional -- MBG will try to install it automatically
-- The system works without TTS (responses printed to console)
-- Check: `python main.py test-tts "Hello"`
 
 ### "Audio device issues"
 
@@ -756,7 +854,7 @@ For faster response:
 
 ---
 
-## 17. Future Robotics Expansion
+## 16. Future Robotics Expansion
 
 Sorachio-STS is architected as the **brain** of a future companion robot.
 
