@@ -75,7 +75,7 @@ class SingleServerManager:
 
         if not binary.exists():
             log.error(f"[{self.name}] Binary not found: {binary}")
-            log.error("Run scripts/build_llamacpp.ps1 to build llama-server.")
+            log.error("Run 'python mbg.py' to auto-build llama-server.")
             return False
 
         if not model.exists():

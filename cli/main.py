@@ -594,7 +594,7 @@ async def _run_pipeline(settings, voice_mode=True, no_servers=False):
 
         if not ok:
             console.print("[red]Failed to start LLM servers.[/red]")
-            console.print("[dim]Hint: Run scripts/build_llamacpp.ps1 first[/dim]")
+            console.print("[dim]Hint: Run 'python mbg.py' to auto-build[/dim]")
             return
         console.print("[dim][OK] LLM servers ready[/dim]")
 

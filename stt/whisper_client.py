@@ -84,11 +84,11 @@ class WhisperClient:
         """Check that binary and model exist."""
         if not self.binary_path.exists():
             log.error(f"[STT] whisper binary not found: {self.binary_path}")
-            log.error("Run scripts/build_whispercpp.ps1 to build whisper.cpp")
+            log.error("Run 'python mbg.py' to auto-build whisper.cpp")
             return False
         if not self.model_path.exists():
             log.error(f"[STT] Whisper model not found: {self.model_path}")
-            log.error("Run scripts/download_whisper_model.ps1 to download model")
+            log.error("Run 'python mbg.py' to auto-download model")
             return False
         return True
 
