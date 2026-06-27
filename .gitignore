@@ -22,7 +22,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-.venv
+venv_runtime/
 venv
 ENV
 env.bak

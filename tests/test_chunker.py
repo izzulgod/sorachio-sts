@@ -2,7 +2,9 @@
 Tests for Chunk Assembler.
 """
 import asyncio
+
 import pytest
+
 from utils.chunk_assembler import ChunkAssembler, split_into_chunks
 
 

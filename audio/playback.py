@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import Optional
 
 import numpy as np
 import sounddevice as sd
@@ -42,7 +41,7 @@ class AudioPlayback:
         sample_rate: int = 24000,
         channels: int = 1,
         dtype: str = "float32",
-        device_index: Optional[int] = None,
+        device_index: int | None = None,
     ):
         self.audio_queue = audio_queue
         self.playback_active_event = playback_active_event
@@ -52,7 +51,7 @@ class AudioPlayback:
         self.device_index = device_index
 
         self._running = False
-        self._stream: Optional[sd.OutputStream] = None
+        self._stream: sd.OutputStream | None = None
         self._stream_lock = threading.Lock()
         self._interrupted = False
 

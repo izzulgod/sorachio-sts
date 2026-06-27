@@ -16,7 +16,6 @@ Features:
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import numpy as np
 
@@ -171,7 +170,7 @@ class KokoroTTSClient:
 
         return text
 
-    async def synthesize_chunk(self, text: str) -> Optional[np.ndarray]:
+    async def synthesize_chunk(self, text: str) -> np.ndarray | None:
         """
         Synthesize a single text chunk to audio.
 

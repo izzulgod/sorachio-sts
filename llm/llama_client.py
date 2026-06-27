@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncIterator, Dict, List, Optional, Any
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -31,7 +32,7 @@ class Message:
         self.role = role
         self.content = content
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         return {"role": self.role, "content": self.content}
 
 
@@ -68,7 +69,7 @@ class LlamaClient:
         self.timeout_s = timeout_s
         self.max_retries = max_retries
 
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -116,10 +117,10 @@ class LlamaClient:
 
     async def complete(
         self,
-        messages: List[Dict[str, str]],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        extra_params: Optional[Dict[str, Any]] = None,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra_params: dict[str, Any] | None = None,
     ) -> str:
         """
         Non-streaming chat completion.
@@ -154,10 +155,10 @@ class LlamaClient:
 
     async def stream(
         self,
-        messages: List[Dict[str, str]],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        extra_params: Optional[Dict[str, Any]] = None,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
         """
         Streaming chat completion via Server-Sent Events.
@@ -197,13 +198,13 @@ class LlamaClient:
 
     def _build_payload(
         self,
-        messages: List[Dict[str, str]],
-        temperature: Optional[float],
-        max_tokens: Optional[int],
+        messages: list[dict[str, str]],
+        temperature: float | None,
+        max_tokens: int | None,
         stream: bool,
-        extra_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
+        extra_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "messages": messages,
             "temperature": temperature if temperature is not None else self.temperature,
             "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,

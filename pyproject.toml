@@ -1,0 +1,49 @@
+[tool.ruff]
+# Exclude directories from linting
+exclude = [
+    "venv",
+    "venv_runtime",
+    "bin",
+    ".repos",
+    ".ruff_cache",
+    ".pyrefly",
+    "logs",
+    "data",
+    "models",
+]
+
+# Enable automatic fixes
+fix = true
+
+# Line length
+line-length = 120
+
+# Select rules
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "F401", # unused imports
+]
+
+# Ignore specific rules
+ignore = []
+
+[tool.pyrefly]
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+]
+project-excludes = [
+    "venv",
+    "venv_runtime",
+    "bin",
+    ".repos",
+    ".ruff_cache",
+    ".pyrefly",
+    "logs",
+    "data",
+    "models",
+]

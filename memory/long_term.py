@@ -21,7 +21,8 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 import aiofiles
 
 from utils.logging_setup import get_logger
@@ -40,9 +41,9 @@ class LTMEntry:
         topic: str = "general",
         emotion: str = "neutral",
         importance: float = 0.5,
-        keywords: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        entry_id: Optional[str] = None,
+        keywords: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        entry_id: str | None = None,
     ):
         self.id = entry_id or str(uuid.uuid4())[:8]
         self.content = content
@@ -55,7 +56,7 @@ class LTMEntry:
         self.accessed_at = self.created_at
         self.access_count = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "content": self.content,
@@ -70,7 +71,7 @@ class LTMEntry:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "LTMEntry":
+    def from_dict(cls, d: dict[str, Any]) -> LTMEntry:
         entry = cls(
             content=d["content"],
             topic=d.get("topic", "general"),
@@ -85,7 +86,7 @@ class LTMEntry:
         entry.access_count = d.get("access_count", 0)
         return entry
 
-    def relevance_score(self, query_keywords: List[str]) -> float:
+    def relevance_score(self, query_keywords: list[str]) -> float:
         """Compute relevance score given query keywords."""
         if not query_keywords:
             return self.importance
@@ -145,7 +146,7 @@ class LongTermMemory:
         self.max_entries = max_entries
         self.importance_threshold = importance_threshold
         self.retrieval_top_k = retrieval_top_k
-        self._entries: List[LTMEntry] = []
+        self._entries: list[LTMEntry] = []
         self._lock = asyncio.Lock()
         self._dirty = False
 
@@ -161,9 +162,9 @@ class LongTermMemory:
         topic: str = "general",
         emotion: str = "neutral",
         importance: float = 0.5,
-        keywords: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[LTMEntry]:
+        keywords: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> LTMEntry | None:
         """
         Store a new memory if it meets the importance threshold.
         Returns the stored entry or None if skipped.
@@ -203,9 +204,9 @@ class LongTermMemory:
 
     async def retrieve(
         self,
-        queries: List[str],
-        top_k: Optional[int] = None,
-    ) -> List[LTMEntry]:
+        queries: list[str],
+        top_k: int | None = None,
+    ) -> list[LTMEntry]:
         """
         Retrieve top-K most relevant memories for given query keywords.
         """
@@ -244,7 +245,7 @@ class LongTermMemory:
         log.debug(f"[LTM] Retrieved {len(results)} memories for queries: {queries}")
         return results
 
-    def format_for_context(self, entries: List[LTMEntry]) -> str:
+    def format_for_context(self, entries: list[LTMEntry]) -> str:
         """Format retrieved memories as a context string for LLM."""
         if not entries:
             return ""
@@ -259,7 +260,7 @@ class LongTermMemory:
             self._entries = []
             return
         try:
-            async with aiofiles.open(self.storage_path, "r", encoding="utf-8") as f:
+            async with aiofiles.open(self.storage_path, encoding="utf-8") as f:
                 raw = await f.read()
             data = json.loads(raw)
             self._entries = [LTMEntry.from_dict(d) for d in data.get("memories", [])]
@@ -280,7 +281,7 @@ class LongTermMemory:
         except Exception as e:
             log.error(f"[LTM] Failed to save: {e}")
 
-    def _extract_keywords(self, text: str) -> List[str]:
+    def _extract_keywords(self, text: str) -> list[str]:
         """Simple keyword extraction (stopword removal)."""
         stopwords = {
             "i", "me", "my", "you", "your", "we", "they", "it", "is", "am",
@@ -303,7 +304,7 @@ class LongTermMemory:
                     break
         return result
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         async with self._lock:
             return {
                 "total_memories": len(self._entries),

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, Optional
+from typing import Any
 
 from llm.llama_client import LlamaClient
 from utils.logging_setup import get_logger
@@ -29,7 +29,7 @@ log = get_logger("cognition.gateway")
 # Default fallback decision
 # ---------------------------------------------------------------------------
 
-DEFAULT_DECISION: Dict[str, Any] = {
+DEFAULT_DECISION: dict[str, Any] = {
     "respond": True,
     "addressed_to_ai": True,
     "store_memory": False,
@@ -59,7 +59,9 @@ Do NOT:
 - add extra text
 
 Required JSON schema:
-{"respond": boolean, "addressed_to_ai": boolean, "store_memory": boolean, "importance": float, "emotion": string, "topic": string, "memory_queries": list, "confidence": float}
+{"respond": boolean, "addressed_to_ai": boolean, "store_memory": boolean,
+ "importance": float, "emotion": string, "topic": string, "memory_queries": list,
+ "confidence": float}
 
 Rules:
 - respond=false for background speech, TV/music, unrelated conversations, or noise
@@ -74,7 +76,9 @@ Rules:
 
 Example Input: "Hey Sorachio, I've been really stressed about my exams this week."
 Example Output:
-{"respond": true, "addressed_to_ai": true, "store_memory": true, "importance": 0.8, "emotion": "anxious", "topic": "exams", "memory_queries": ["exams", "stress"], "confidence": 0.9}
+{"respond": true, "addressed_to_ai": true, "store_memory": true, "importance": 0.8,
+ "emotion": "anxious", "topic": "exams", "memory_queries": ["exams", "stress"],
+ "confidence": 0.9}
 
 Analyze the user's input and fill the JSON with appropriate values. Output ONLY valid JSON.
 """
@@ -102,8 +106,8 @@ class CognitiveGateway:
     async def analyze(
         self,
         transcript: str,
-        conversation_context: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        conversation_context: str | None = None,
+    ) -> dict[str, Any]:
         """
         Analyze transcript and return structured decision.
         """
@@ -187,7 +191,7 @@ class CognitiveGateway:
     # JSON parsing + repair
     # -----------------------------------------------------------------------
 
-    def _parse_json(self, raw: str) -> Dict[str, Any]:
+    def _parse_json(self, raw: str) -> dict[str, Any]:
         """
         Parse and repair malformed JSON from model output.
 
@@ -236,10 +240,12 @@ class CognitiveGateway:
             """Add missing closing brackets and braces."""
             s = re.sub(r",\s*}", "}", s)
             s = re.sub(r",\s*]", "]", s)
-            ob = s.count("["); cb = s.count("]")
+            ob = s.count("[")
+            cb = s.count("]")
             if cb < ob:
                 s += "]" * (ob - cb)
-            ob = s.count("{"); cb = s.count("}")
+            ob = s.count("{")
+            cb = s.count("}")
             if cb < ob:
                 s += "}" * (ob - cb)
             return s
@@ -305,8 +311,8 @@ class CognitiveGateway:
 
     def _validate_decision(
         self,
-        decision: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        decision: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Validate and normalize decision output.
         """

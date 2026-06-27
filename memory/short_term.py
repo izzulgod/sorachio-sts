@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Deque, Dict, List, Optional, Any
+from typing import Any
 
 from utils.logging_setup import get_logger
 
@@ -35,12 +35,12 @@ class STMEntry:
     topic: str = "general"
     importance: float = 0.5
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["timestamp"] = self.timestamp.isoformat()
         return d
 
-    def to_chat_message(self) -> Dict[str, str]:
+    def to_chat_message(self) -> dict[str, str]:
         """Format as LLM chat message."""
         return {"role": self.role, "content": self.content}
 
@@ -64,7 +64,7 @@ class ShortTermMemory:
     ):
         self.max_messages = max_messages
         self.include_emotions = include_emotions
-        self._window: Deque[STMEntry] = deque(maxlen=max_messages)
+        self._window: deque[STMEntry] = deque(maxlen=max_messages)
         self._lock = asyncio.Lock()
         self._turn_count = 0
 
@@ -90,7 +90,7 @@ class ShortTermMemory:
                 self._turn_count += 1
             log.debug(f"[STM] Added [{role}] len={len(self._window)}")
 
-    async def get_recent(self, n: Optional[int] = None) -> List[STMEntry]:
+    async def get_recent(self, n: int | None = None) -> list[STMEntry]:
         """Get the N most recent entries (or all if n=None)."""
         async with self._lock:
             entries = list(self._window)
@@ -98,7 +98,7 @@ class ShortTermMemory:
                 entries = entries[-n:]
             return entries
 
-    async def get_chat_messages(self, n: Optional[int] = None) -> List[Dict[str, str]]:
+    async def get_chat_messages(self, n: int | None = None) -> list[dict[str, str]]:
         """Get recent entries formatted as LLM chat messages."""
         entries = await self.get_recent(n)
         return [e.to_chat_message() for e in entries]

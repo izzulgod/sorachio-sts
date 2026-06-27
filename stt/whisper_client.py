@@ -17,11 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import os
-import struct
 import tempfile
 import wave
 from pathlib import Path
-from typing import Optional
 
 from utils.logging_setup import get_logger
 
@@ -86,15 +84,15 @@ class WhisperClient:
         """Check that binary and model exist."""
         if not self.binary_path.exists():
             log.error(f"[STT] whisper binary not found: {self.binary_path}")
-            log.error("Run scripts/build_whispercpp.ps1 to build whisper.cpp")
+            log.error("Run 'python mbg.py' to auto-build whisper.cpp")
             return False
         if not self.model_path.exists():
             log.error(f"[STT] Whisper model not found: {self.model_path}")
-            log.error("Run scripts/download_whisper_model.ps1 to download model")
+            log.error("Run 'python mbg.py' to auto-download model")
             return False
         return True
 
-    async def transcribe(self, audio_bytes: bytes) -> Optional[str]:
+    async def transcribe(self, audio_bytes: bytes) -> str | None:
         """
         Transcribe raw PCM audio bytes to text.
 

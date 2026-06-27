@@ -14,13 +14,10 @@ Interruption flows backwards: VAD → interrupt_event → Personality + TTS + Pl
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
-from typing import Optional
 
 from config.settings import SorachioSettings, resolve_path
-from utils.logging_setup import get_logger, setup_logging
-from core.events import EventBus, EventType, Event, get_bus
+from core.events import EventType, get_bus
+from utils.logging_setup import get_logger
 
 log = get_logger("core.pipeline")
 
@@ -50,7 +47,7 @@ class SorachioPipeline:
         self._cognitive_queue: asyncio.Queue[str] = asyncio.Queue(
             maxsize=cfg_q.cognitive_queue_maxsize
         )
-        self._tts_chunk_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(
+        self._tts_chunk_queue: asyncio.Queue[str | None] = asyncio.Queue(
             maxsize=cfg_q.tts_chunk_queue_maxsize
         )
         self._audio_queue: asyncio.Queue = asyncio.Queue(
@@ -125,8 +122,8 @@ class SorachioPipeline:
         )
 
         # ---- Memory ----
-        from memory.short_term import ShortTermMemory
         from memory.long_term import LongTermMemory
+        from memory.short_term import ShortTermMemory
         mem_cfg = cfg.memory
         self._stm = ShortTermMemory(
             max_messages=mem_cfg.short_term.max_messages,

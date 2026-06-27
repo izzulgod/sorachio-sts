@@ -14,10 +14,10 @@ This produces a rich, context-aware prompt for natural conversation.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from memory.short_term import ShortTermMemory
 from memory.long_term import LongTermMemory
+from memory.short_term import ShortTermMemory
 from utils.logging_setup import get_logger
 
 log = get_logger("context.manager")
@@ -53,8 +53,8 @@ class ContextManager:
     async def build_prompt(
         self,
         user_input: str,
-        cognitive_decision: Dict[str, Any],
-    ) -> List[Dict[str, str]]:
+        cognitive_decision: dict[str, Any],
+    ) -> list[dict[str, str]]:
         """
         Build the full message list for LLM #2.
 
@@ -86,7 +86,7 @@ class ContextManager:
         )
 
         # Build message list
-        messages: List[Dict[str, str]] = [
+        messages: list[dict[str, str]] = [
             {"role": "system", "content": system_content},
         ]
 
@@ -141,7 +141,7 @@ class ContextManager:
         self,
         user_input: str,
         assistant_response: str,
-        cognitive_decision: Dict[str, Any],
+        cognitive_decision: dict[str, Any],
     ) -> None:
         """
         Store this interaction in STM and optionally LTM.

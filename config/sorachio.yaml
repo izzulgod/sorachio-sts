@@ -35,7 +35,7 @@ audio:
 # STT Configuration (whisper.cpp)
 # =============================================================================
 stt:
-  binary_path: "bin/whisper-cli.exe"   # Path to whisper.cpp CLI binary
+  binary_path: "bin/whisper-cli"   # Path to whisper.cpp CLI binary (platform-specific extension added automatically)
   model_path: "models/stt/ggml-base.en.bin"
   language: "en"
   threads: 4
@@ -76,7 +76,7 @@ llm:
     server_port: 8002
 
   # llama-server binary
-  server_binary: "bin/llama-server.exe"
+  server_binary: "bin/llama-server"
 
 # =============================================================================
 # TTS Configuration (Kokoro)

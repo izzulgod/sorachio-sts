@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional, List
 
 import yaml
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Sub-models
@@ -21,7 +19,7 @@ class AudioCaptureConfig(BaseModel):
     sample_rate: int = 16000
     channels: int = 1
     chunk_duration_ms: int = 30
-    device_index: Optional[int] = None
+    device_index: int | None = None
     silence_timeout_ms: int = 800
     vad_aggressiveness: int = 2
     min_speech_duration_ms: int = 500
@@ -32,7 +30,7 @@ class AudioPlaybackConfig(BaseModel):
     sample_rate: int = 24000
     channels: int = 1
     dtype: str = "float32"
-    device_index: Optional[int] = None
+    device_index: int | None = None
     buffer_size: int = 2048
 
 
@@ -42,7 +40,7 @@ class AudioConfig(BaseModel):
 
 
 class STTConfig(BaseModel):
-    binary_path: str = "bin/whisper-cli.exe"
+    binary_path: str = "bin/whisper-cli.exe" if os.name == "nt" else "bin/whisper-cli"
     model_path: str = "models/stt/ggml-base.en.bin"
     language: str = "en"
     threads: int = 4
@@ -70,7 +68,7 @@ class LLMInstanceConfig(BaseModel):
 class LLMConfig(BaseModel):
     cognitive_gateway: LLMInstanceConfig
     personality_core: LLMInstanceConfig
-    server_binary: str = "bin/llama-server.exe"
+    server_binary: str = "bin/llama-server.exe" if os.name == "nt" else "bin/llama-server"
 
 
 class TTSConfig(BaseModel):
@@ -78,7 +76,7 @@ class TTSConfig(BaseModel):
     speed: float = 1.0
     sample_rate: int = 24000
     lang: str = "en-us"
-    split_pattern: Optional[str] = None
+    split_pattern: str | None = None
 
 
 class STMConfig(BaseModel):
@@ -114,7 +112,7 @@ class ContextConfig(BaseModel):
 class ChunkerConfig(BaseModel):
     min_words: int = 3
     max_words: int = 30
-    sentence_endings: List[str] = [".", "!", "?", ";", "..."]
+    sentence_endings: list[str] = [".", "!", "?", ";", "..."]
     flush_on_comma: bool = False
     flush_timeout_s: float = 2.0
 
@@ -162,8 +160,8 @@ class SorachioSettings(BaseModel):
 # Loader
 # ---------------------------------------------------------------------------
 
-_settings: Optional[SorachioSettings] = None
-_project_root: Optional[Path] = None
+_settings: SorachioSettings | None = None
+_project_root: Path | None = None
 
 
 def get_project_root() -> Path:
@@ -183,7 +181,7 @@ def get_project_root() -> Path:
     return _project_root
 
 
-def load_settings(config_path: Optional[str] = None) -> SorachioSettings:
+def load_settings(config_path: str | None = None) -> SorachioSettings:
     """Load settings from YAML file."""
     global _settings
 
@@ -198,7 +196,7 @@ def load_settings(config_path: Optional[str] = None) -> SorachioSettings:
             f"Run from the project root or specify --config path."
         )
 
-    with open(config_file, "r", encoding="utf-8") as f:
+    with open(config_file, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     _settings = SorachioSettings(**raw)

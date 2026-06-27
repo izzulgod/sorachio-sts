@@ -15,11 +15,9 @@ Features:
 from __future__ import annotations
 
 import asyncio
-import array
 import queue
 import threading
-import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import numpy as np
 import sounddevice as sd
@@ -46,17 +44,17 @@ class AudioCapture:
     def __init__(
         self,
         stt_queue: asyncio.Queue,
-        interrupt_callback: Optional[Callable] = None,
+        interrupt_callback: Callable | None = None,
         sample_rate: int = 16000,
         channels: int = 1,
         chunk_duration_ms: int = 30,
-        device_index: Optional[int] = None,
+        device_index: int | None = None,
         silence_timeout_ms: int = 800,
         vad_aggressiveness: int = 2,
         min_speech_duration_ms: int = 500,
         max_speech_duration_s: int = 30,
-        playback_active_event: Optional[asyncio.Event] = None,
-        interrupt_event: Optional[asyncio.Event] = None,
+        playback_active_event: asyncio.Event | None = None,
+        interrupt_event: asyncio.Event | None = None,
     ):
         self.stt_queue = stt_queue
         self.interrupt_callback = interrupt_callback
@@ -78,10 +76,10 @@ class AudioCapture:
         self._vad = webrtcvad.Vad(vad_aggressiveness)
         self._frame_size = int(sample_rate * chunk_duration_ms / 1000)
         self._raw_queue: queue.Queue = queue.Queue(maxsize=200)
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
-        self._stream: Optional[sd.InputStream] = None
-        self._vad_thread: Optional[threading.Thread] = None
+        self._stream: sd.InputStream | None = None
+        self._vad_thread: threading.Thread | None = None
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start capture in background threads."""
@@ -159,7 +157,7 @@ class AudioCapture:
                     triggered = True
                     log.debug("[VAD] Speech detected")
                     if self._loop:
-                        from core.events import get_bus, EventType
+                        from core.events import EventType, get_bus
                         asyncio.run_coroutine_threadsafe(
                             get_bus().emit(EventType.USER_SPEECH_START, source="vad"), self._loop
                         )
@@ -224,7 +222,7 @@ class AudioCapture:
 
         if self._loop:
             try:
-                from core.events import get_bus, EventType
+                from core.events import EventType, get_bus
                 asyncio.run_coroutine_threadsafe(
                     get_bus().emit(EventType.USER_SPEECH_END, source="vad"), self._loop
                 )

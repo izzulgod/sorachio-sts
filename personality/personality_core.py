@@ -12,7 +12,8 @@ Responsibilities:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 from llm.llama_client import LlamaClient
 from utils.chunk_assembler import ChunkAssembler
@@ -38,7 +39,7 @@ class PersonalityCore:
         client: LlamaClient,
         tts_queue: asyncio.Queue,
         interrupt_event: asyncio.Event,
-        chunker_config: Optional[Dict[str, Any]] = None,
+        chunker_config: dict[str, Any] | None = None,
         temperature: float = 0.8,
         max_tokens: int = 512,
     ):
@@ -58,12 +59,12 @@ class PersonalityCore:
             flush_timeout_s=cfg.get("flush_timeout_s", 2.0),
         )
 
-        self._current_task: Optional[asyncio.Task] = None
+        self._current_task: asyncio.Task | None = None
         self._full_response: str = ""
 
     async def generate_streaming(
         self,
-        messages: List[Dict[str, str]],
+        messages: list[dict[str, str]],
     ) -> str:
         """
         Stream response from LLM #2, assemble chunks, queue for TTS.
@@ -85,7 +86,7 @@ class PersonalityCore:
 
             # Wrap token stream to track interruption
             async def interruptible_stream() -> AsyncIterator[str]:
-                from core.events import get_bus, EventType
+                from core.events import EventType, get_bus
                 bus = get_bus()
                 async for token in token_stream:
                     if self.interrupt_event.is_set():

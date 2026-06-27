@@ -14,10 +14,9 @@ Does NOT chunk on:
 
 from __future__ import annotations
 
-import asyncio
 import re
 import time
-from typing import AsyncIterator, List, Optional
+from collections.abc import AsyncIterator
 
 from utils.logging_setup import get_logger
 
@@ -67,7 +66,7 @@ class ChunkAssembler:
         self,
         min_words: int = 3,
         max_words: int = 30,
-        sentence_endings: Optional[List[str]] = None,
+        sentence_endings: list[str] | None = None,
         flush_on_comma: bool = False,
         flush_timeout_s: float = 2.0,
     ):
@@ -153,7 +152,7 @@ class ChunkAssembler:
                 yield final
             self._buffer = ""
 
-    def _split_on_boundaries(self, text: str) -> List[str]:
+    def _split_on_boundaries(self, text: str) -> list[str]:
         """
         Split text on sentence boundaries. Returns list of segments.
         The last segment is always the incomplete/current one.
@@ -182,12 +181,12 @@ def split_into_chunks(
     text: str,
     min_words: int = 3,
     max_words: int = 30,
-) -> List[str]:
+) -> list[str]:
     """
     Split a complete text into TTS-ready chunks synchronously.
     Useful for testing or pre-processing.
     """
-    assembler = ChunkAssembler(min_words=min_words, max_words=max_words)
+    ChunkAssembler(min_words=min_words, max_words=max_words)
     pattern = r'(?<=[.!?;])\s+'
     parts = re.split(pattern, text)
     chunks = []

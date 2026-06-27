@@ -16,9 +16,8 @@ import os
 import signal
 import subprocess
 from pathlib import Path
-from typing import Dict, Optional
 
-from config.settings import LLMInstanceConfig, resolve_path
+from config.settings import LLMInstanceConfig
 from utils.logging_setup import get_logger
 
 log = get_logger("services.server_manager")
@@ -48,7 +47,7 @@ class SingleServerManager:
         self.port = port
         self.config = config
         self.log_dir = log_dir
-        self._process: Optional[subprocess.Popen] = None
+        self._process: subprocess.Popen | None = None
         self._log_file = None
 
     def _build_command(self) -> list[str]:
@@ -76,7 +75,7 @@ class SingleServerManager:
 
         if not binary.exists():
             log.error(f"[{self.name}] Binary not found: {binary}")
-            log.error("Run scripts/build_llamacpp.ps1 to build llama-server.")
+            log.error("Run 'python mbg.py' to auto-build llama-server.")
             return False
 
         if not model.exists():
@@ -153,7 +152,7 @@ class ServerManager:
         binary = project_root / llm_config.server_binary
         log_dir = project_root / "logs"
 
-        self._servers: Dict[str, SingleServerManager] = {
+        self._servers: dict[str, SingleServerManager] = {
             "cognitive_gateway": SingleServerManager(
                 name="CognitiveGateway",
                 binary_path=binary,
@@ -218,5 +217,5 @@ class ServerManager:
         for srv in self._servers.values():
             srv.stop()
 
-    def status(self) -> Dict[str, bool]:
+    def status(self) -> dict[str, bool]:
         return {name: srv.is_running() for name, srv in self._servers.items()}

@@ -1,13 +1,12 @@
 """
 Tests for Memory System (STM + LTM).
 """
-import asyncio
-import json
 import tempfile
-from pathlib import Path
+
 import pytest
-from memory.short_term import ShortTermMemory
+
 from memory.long_term import LongTermMemory
+from memory.short_term import ShortTermMemory
 
 
 @pytest.mark.asyncio

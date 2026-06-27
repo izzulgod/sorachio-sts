@@ -7,13 +7,10 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-import sys
 from pathlib import Path
-from typing import Optional
 
-from rich.logging import RichHandler
 from rich.console import Console
-
+from rich.logging import RichHandler
 
 _console = Console(stderr=True)
 _initialized = False
@@ -21,7 +18,7 @@ _initialized = False
 
 def setup_logging(
     level: str = "INFO",
-    log_dir: Optional[str] = None,
+    log_dir: str | None = None,
     log_file: str = "sorachio.log",
 ) -> logging.Logger:
     """

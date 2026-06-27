@@ -20,10 +20,11 @@ Events:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional
 from datetime import datetime
+from enum import Enum, auto
+from typing import Any
 
 from utils.logging_setup import get_logger
 
@@ -102,8 +103,8 @@ class EventBus:
     """
 
     def __init__(self) -> None:
-        self._handlers: Dict[EventType, List[HandlerFn]] = {}
-        self._global_handlers: List[HandlerFn] = []
+        self._handlers: dict[EventType, list[HandlerFn]] = {}
+        self._global_handlers: list[HandlerFn] = []
 
     def subscribe(self, event_type: EventType, handler: HandlerFn) -> None:
         """Register a handler for a specific event type."""
@@ -151,7 +152,7 @@ class EventBus:
 # Global bus singleton
 # ---------------------------------------------------------------------------
 
-_bus: Optional[EventBus] = None
+_bus: EventBus | None = None
 
 
 def get_bus() -> EventBus:

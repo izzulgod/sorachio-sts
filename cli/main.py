@@ -17,15 +17,21 @@ Modes:
 
 from __future__ import annotations
 
-from rich.logging import RichHandler
-import logging
-
-import warnings
 import asyncio
+import logging
 import os
 import sys
+import warnings
 from pathlib import Path
-from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.live import Live
+from rich.logging import RichHandler
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.spinner import Spinner
+from rich.table import Table
 
 # ------------------------------------------------------------------
 # Global suppression of unauthenticated HF warnings and PyTorch spam
@@ -62,15 +68,6 @@ class _NoiseFilter(logging.Filter):
 
 logging.root.addFilter(_NoiseFilter())
 
-import typer
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-from rich import print as rprint
-from rich.live import Live
-from rich.spinner import Spinner
-from rich.prompt import Prompt
-
 # Add project root to path
 _project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(_project_root))
@@ -95,7 +92,7 @@ app.add_typer(memory_app)
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _load_settings(config: Optional[str] = None):
+def _load_settings(config: str | None = None):
     from config.settings import load_settings
     try:
         settings = load_settings(config)
@@ -106,13 +103,14 @@ def _load_settings(config: Optional[str] = None):
 
 
 def _setup_logging(settings):
-    from utils.logging_setup import setup_logging
+    import os
 
     # ------------------------------------------------------------------
     # Hide annoying warnings globally
     # ------------------------------------------------------------------
     import warnings
-    import os
+
+    from utils.logging_setup import setup_logging
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
     warnings.filterwarnings("ignore", message=".*words count mismatch.*")
@@ -164,7 +162,7 @@ def _print_banner():
 
 @app.command()
 def run(
-    config: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Config file path"),
     no_greeting: bool = typer.Option(False, "--no-greeting", help="Skip startup greeting"),
     no_servers: bool = typer.Option(False, "--no-servers", help="Skip starting llama-servers"),
 ):
@@ -185,8 +183,8 @@ def run(
 
 @app.command()
 def text(
-    config: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
-    message: Optional[str] = typer.Option(None, "--message", "-m", help="Single message (non-interactive)"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Config file path"),
+    message: str | None = typer.Option(None, "--message", "-m", help="Single message (non-interactive)"),
     no_servers: bool = typer.Option(False, "--no-servers", help="Skip starting llama-servers"),
 ):
     """Run Sorachio in text input mode (no microphone required)."""
@@ -196,10 +194,11 @@ def text(
     asyncio.run(_run_text_mode(settings, single_message=message, no_servers=no_servers))
 
 async def _run_text_mode(settings, single_message=None, no_servers=False):
-    from services.server_manager import ServerManager
-    from core.pipeline import SorachioPipeline
     import logging
     import warnings
+
+    from core.pipeline import SorachioPipeline
+    from services.server_manager import ServerManager
 
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
@@ -246,7 +245,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
 
     voice_cli = VoiceCLI(mode="text")
 
-    from core.events import get_bus, EventType
+    from core.events import EventType, get_bus
 
     async def _on_response_end_local(event):
         """Unblocks input loop after Sorachio finishes responding."""
@@ -349,7 +348,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
 
                 response_ready.clear()
                 voice_cli.start()
-                
+
                 await get_bus().emit(EventType.STT_RESULT, data=user_input, source="cli")
                 await pipeline.inject_text(user_input)
 
@@ -418,7 +417,6 @@ class VoiceCLI:
     def _spin_start(self, label: str, color: str = "yellow") -> None:
         """Start a fresh transient Live spinner. Stops any existing one first."""
         self._spin_stop()
-        from rich.text import Text
         self._live = Live(
             Spinner("dots", text=f"[{color}]{label}[/{color}]", style=color),
             console=console,
@@ -537,7 +535,7 @@ class VoiceCLI:
         # ── Print the status capsule row ──────────────────────────────
         sep = "  [dim][/dim]  "
         console.print(
-            f"\n[bold dim]  >>> STATUS[/bold dim]  "
+            "\n[bold dim]  >>> STATUS[/bold dim]  "
             + emo_pill
             + sep + r_pill
             + sep + m_pill
@@ -572,10 +570,11 @@ class VoiceCLI:
             self._spin_start("Listening…", "cyan")
 
 async def _run_pipeline(settings, voice_mode=True, no_servers=False):
-    from services.server_manager import ServerManager
-    from core.pipeline import SorachioPipeline
-    import signal
     import platform
+    import signal
+
+    from core.pipeline import SorachioPipeline
+    from services.server_manager import ServerManager
 
     root = _project_root
     srv_mgr = None
@@ -595,7 +594,7 @@ async def _run_pipeline(settings, voice_mode=True, no_servers=False):
 
         if not ok:
             console.print("[red]Failed to start LLM servers.[/red]")
-            console.print("[dim]Hint: Run scripts/build_llamacpp.ps1 first[/dim]")
+            console.print("[dim]Hint: Run 'python mbg.py' to auto-build[/dim]")
             return
         console.print("[dim][OK] LLM servers ready[/dim]")
 
@@ -651,8 +650,8 @@ async def _run_pipeline(settings, voice_mode=True, no_servers=False):
 
 @app.command("test-stt")
 def test_stt(
-    config: Optional[str] = typer.Option(None, "--config", "-c"),
-    audio_file: Optional[str] = typer.Option(None, "--file", "-f", help="WAV file to transcribe"),
+    config: str | None = typer.Option(None, "--config", "-c"),
+    audio_file: str | None = typer.Option(None, "--file", "-f", help="WAV file to transcribe"),
 ):
     """Test STT component with a WAV file or microphone."""
     settings = _load_settings(config)
@@ -674,7 +673,6 @@ def test_stt(
         else:
             console.print("[yellow]No --file specified. Recording 5 seconds from mic...[/yellow]")
             import sounddevice as sd
-            import numpy as np
             audio = sd.rec(5 * 16000, samplerate=16000, channels=1, dtype="int16")
             sd.wait()
             audio_bytes = audio.tobytes()
@@ -691,7 +689,7 @@ def test_stt(
 @app.command("test-tts")
 def test_tts(
     text_input: str = typer.Argument("Hello! I am Sorachio, your AI companion."),
-    config: Optional[str] = typer.Option(None, "--config", "-c"),
+    config: str | None = typer.Option(None, "--config", "-c"),
 ):
     """Test TTS synthesis and playback."""
     settings = _load_settings(config)
@@ -735,7 +733,7 @@ def test_tts(
 @app.command("test-cognitive")
 def test_cognitive(
     text_input: str = typer.Argument("Hey Sorachio, I've been really stressed about my exams."),
-    config: Optional[str] = typer.Option(None, "--config", "-c"),
+    config: str | None = typer.Option(None, "--config", "-c"),
     no_servers: bool = typer.Option(False, "--no-servers"),
 ):
     """Test Cognitive Gateway JSON analysis."""
@@ -743,10 +741,11 @@ def test_cognitive(
     _setup_logging(settings)
 
     async def _test():
-        from services.server_manager import ServerManager
-        from llm.llama_client import LlamaClient
-        from cognition.cognitive_gateway import CognitiveGateway
         import json
+
+        from cognition.cognitive_gateway import CognitiveGateway
+        from llm.llama_client import LlamaClient
+        from services.server_manager import ServerManager
 
         root = _project_root
         srv_mgr = None
@@ -787,7 +786,7 @@ def test_cognitive(
 # ---------------------------------------------------------------------------
 
 @servers_app.command("status")
-def servers_status(config: Optional[str] = typer.Option(None)):
+def servers_status(config: str | None = typer.Option(None)):
     """Show status of llama-server instances."""
     settings = _load_settings(config)
 
@@ -815,7 +814,7 @@ def servers_status(config: Optional[str] = typer.Option(None)):
 
 
 @servers_app.command("start")
-def servers_start(config: Optional[str] = typer.Option(None)):
+def servers_start(config: str | None = typer.Option(None)):
     """Start both llama-server instances."""
     settings = _load_settings(config)
     _setup_logging(settings)
@@ -833,7 +832,7 @@ def servers_start(config: Optional[str] = typer.Option(None)):
 
 
 @servers_app.command("stop")
-def servers_stop(config: Optional[str] = typer.Option(None)):
+def servers_stop(config: str | None = typer.Option(None)):
     """Stop both llama-server instances."""
     settings = _load_settings(config)
 
@@ -851,7 +850,7 @@ def servers_stop(config: Optional[str] = typer.Option(None)):
 # ---------------------------------------------------------------------------
 
 @memory_app.command("list")
-def memory_list(config: Optional[str] = typer.Option(None)):
+def memory_list(config: str | None = typer.Option(None)):
     """List all long-term memories."""
     settings = _load_settings(config)
     _setup_logging(settings)
@@ -879,7 +878,7 @@ def memory_list(config: Optional[str] = typer.Option(None)):
 
 @memory_app.command("clear")
 def memory_clear(
-    config: Optional[str] = typer.Option(None),
+    config: str | None = typer.Option(None),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ):
     """Clear all long-term memories."""
