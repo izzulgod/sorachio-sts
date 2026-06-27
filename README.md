@@ -65,6 +65,37 @@ The system is designed from the ground up as a **scalable AI companion operating
 
 ## 2. Architecture Diagram
 
+graph TD
+    %% Nodes Definition
+    Mic([Microphone]) --> AudioCap[AudioCapture <br> VAD]
+    
+    AudioCap -->|interrupt| PlayState[PlaybackState <br> asyncio.Event]
+    AudioCap --> STTQueue[STT Queue <br> asyncio.Queue]
+    
+    STTQueue --> STTWorker[STT Worker <br> whisper.cpp CLI]
+    STTWorker -->|transcript| CogWorker[Cognitive Worker <br> LLM #1: Qwen3-0.6B <br> → JSON decision]
+    
+    CogWorker -->|decision| MemSystem
+    
+    subgraph MemSystem [Memory System]
+        STM[STM <br> in-memory]
+        LTM[LTM <br> JSON file]
+    end
+    
+    MemSystem -->|context| CtxMgr[Context Manager <br> system prompt + STM + LTM + emotion]
+    CtxMgr -->|messages[]| PersWorker[Personality Worker <br> LLM #2: gemma-3-1b-it <br> Streaming token generation]
+    
+    PersWorker -->|token stream| ChunkAsm[Chunk Assembler <br> sentence boundary detection <br> 'Hello there.' 'How are you?']
+    ChunkAsm -->|speech chunks| TTSWorker[TTS Worker <br> Kokoro <br> per-chunk synthesis]
+    TTSWorker -->|audio arrays| PlayQueue[Audio Playback Queue <br> interruptible, sounddevice]
+    
+    PlayQueue --> Speaker([Speaker])
+
+    %% Styling
+    style MemSystem fill:#f9f9f9,stroke:#333,stroke-width:1px
+    style PlayState fill:#ffcccc,stroke:#333,stroke-width:1px
+    
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Sorachio-STS Pipeline                        │
