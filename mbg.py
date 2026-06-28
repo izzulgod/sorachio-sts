@@ -182,9 +182,6 @@ class MasterBootstrapGuardian:
                     try:
                         subprocess.run([exe_path] + sys.argv)
                     except KeyboardInterrupt:
-                        # Ctrl+C on Windows is broadcast to this parent too,
-                        # even though the child already handles its own
-                        # shutdown. Swallow it instead of crashing.
                         pass
                     sys.exit(0)
         
@@ -216,10 +213,6 @@ class MasterBootstrapGuardian:
         try:
             subprocess.run([str(venv_python)] + sys.argv)
         except KeyboardInterrupt:
-            # On Windows, Ctrl+C is broadcast to this parent launcher too,
-            # even though the child (the real app) already handles its own
-            # graceful shutdown. Without this, the launcher crashes with a
-            # raw KeyboardInterrupt traceback right after the app exits cleanly.
             pass
         sys.exit(0)
 
@@ -254,7 +247,7 @@ class MasterBootstrapGuardian:
             "python-dotenv",
             "structlog",
             "kokoro>=0.9.2",
-            "misaki[en]",         # kokoro G2P engine (English phonemizer)
+            "misaki[en]",         
         ]
         
         log.info(f"Installing {len(deps)} packages...")
