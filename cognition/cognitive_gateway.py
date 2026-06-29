@@ -74,11 +74,15 @@ Rules:
 - topic should be a short label
 - emotion must be one of: neutral, happy, sad, anxious, frustrated, excited, confused, tired
 
-Example Input: "Hey Sorachio, I've been really stressed about my exams this week."
+Example Input: "Hey, I've been really stressed about my exams this week."
 Example Output:
 {"respond": true, "addressed_to_ai": true, "store_memory": true, "importance": 0.8,
  "emotion": "anxious", "topic": "exams", "memory_queries": ["exams", "stress"],
  "confidence": 0.9}
+
+More Examples:
+Input: "Hey Mom! Can you turn off that TV please?"
+Output: {"respond":false,"addressed_to_ai":false,"store_memory":false,"importance":0.1,"emotion":"neutral","topic":"social_interaction","memory_queries":[],"confidence":0.98}
 
 Analyze the user's input and fill the JSON with appropriate values. Output ONLY valid JSON.
 """

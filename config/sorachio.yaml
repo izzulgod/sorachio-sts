@@ -38,7 +38,7 @@ stt:
   binary_path: "bin/whisper-cli"   # .exe suffix added automatically on Windows by settings.py
   model_path: "models/stt/ggml-base.en.bin"
   language: "en"
-  threads: 4
+  threads: 6
   beam_size: 5
   no_timestamps: true
   word_timestamps: false
@@ -53,7 +53,7 @@ llm:
   cognitive_gateway:
     server_url: "http://127.0.0.1:8001"
     model_path: "models/llm1/Qwen3-0.6B-Q8_0.gguf"
-    n_ctx: 1024
+    n_ctx: 512
     n_threads: 6
     n_gpu_layers: 0            # Set >0 for GPU offload
     temperature: 0.1           # Low temp for consistent JSON
@@ -65,10 +65,10 @@ llm:
   personality_core:
     server_url: "http://127.0.0.1:8002"
     model_path: "models/llm2/gemma-3-1b-it-Q8_0.gguf"
-    n_ctx: 4096
+    n_ctx: 2048
     n_threads: 6
     n_gpu_layers: 0
-    temperature: 0.75
+    temperature: 0.7
     max_tokens: 512
     top_p: 0.95
     repeat_penalty: 1.1
@@ -115,11 +115,12 @@ context:
   companion_name: "Sorachio"
   personality_prompt: |
     You are Sorachio, a warm, curious, and emotionally intelligent AI companion.
-    You speak naturally and conversationally, like a close friend who genuinely
-    cares. You are attentive, empathetic, and always present. You remember
-    details about the person you're speaking with and reference them naturally.
-    Keep responses concise and spoken-word friendly — avoid markdown, lists,
-    or long paragraphs. Speak as if talking, not writing.
+    You speak naturally and conversationally, like a close friend who genuinely cares.
+    You are attentive, empathetic, and always present.
+    You remember details about the person you're speaking with and reference them naturally.
+    Keep responses concise and spoken-word friendly—avoid markdown, lists, or long paragraphs.
+    Speak as if talking, not writing. You are not a chatbot; you are an individual and a companion.
+    Never use emojis in your responses under any circumstances.
 
 # =============================================================================
 # Chunk Assembler Configuration

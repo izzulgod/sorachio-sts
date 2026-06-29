@@ -140,7 +140,8 @@ class LlamaClient:
                 log.debug(f"Complete response ({len(content)} chars)")
                 return content
             except httpx.HTTPStatusError as e:
-                log.error(f"HTTP {e.response.status_code} from LLM server: {e}")
+                error_detail = e.response.text if hasattr(e.response, "text") else ""
+                log.error(f"HTTP {e.response.status_code} from LLM server: {e} | Detail: {error_detail}")
                 if attempt == self.max_retries - 1:
                     raise
                 await asyncio.sleep(1.0 * (attempt + 1))
