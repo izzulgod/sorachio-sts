@@ -31,13 +31,18 @@ log = get_logger("cognition.gateway")
 
 DEFAULT_DECISION: dict[str, Any] = {
     "respond": True,
-    "addressed_to_ai": True,
+    "interrupt": False,
+    "priority": "medium",
+    "speech_type": "direct_address",
+    "confidence": 0.5,
     "store_memory": False,
-    "importance": 0.3,
     "emotion": "neutral",
     "topic": "general",
+    "social_attention": 0.5,
+    # Legacy fields preserved for backward compatibility
+    "addressed_to_ai": True,
+    "importance": 0.3,
     "memory_queries": [],
-    "confidence": 0.5,
 }
 
 
@@ -59,13 +64,18 @@ Do NOT:
 - add extra text
 
 Required JSON schema:
-{"respond": boolean, "addressed_to_ai": boolean, "store_memory": boolean,
+{"respond": boolean, "interrupt": boolean, "priority": string, "speech_type": string,
+ "social_attention": float, "addressed_to_ai": boolean, "store_memory": boolean,
  "importance": float, "emotion": string, "topic": string, "memory_queries": list,
  "confidence": float}
 
 Rules:
-- respond=false for background speech, TV/music, unrelated conversations, or noise
+- speech_type must be one of: direct_address, background, filler, ambient, conversation
+- priority must be one of: low, medium, high
+- social_attention must be 0.0-1.0 (how much attention the user is paying to you)
+- respond=false for background speech, TV/music, filler words (um, uh), or noise
 - respond=true for greetings, questions, commands, or intentional interaction
+- interrupt=true ONLY if the user is urgently telling you to stop or changing the subject forcefully
 - addressed_to_ai=true if user directly speaks to Sorachio
 - store_memory=true for personal facts, goals, preferences, or important events
 - importance must be 0.0-1.0
@@ -76,13 +86,20 @@ Rules:
 
 Example Input: "Hey, I've been really stressed about my exams this week."
 Example Output:
-{"respond": true, "addressed_to_ai": true, "store_memory": true, "importance": 0.8,
+{"respond": true, "interrupt": false, "priority": "high", "speech_type": "direct_address",
+ "social_attention": 0.9, "addressed_to_ai": true, "store_memory": true, "importance": 0.8,
  "emotion": "anxious", "topic": "exams", "memory_queries": ["exams", "stress"],
  "confidence": 0.9}
 
 More Examples:
 Input: "Hey Mom! Can you turn off that TV please?"
-Output: {"respond":false,"addressed_to_ai":false,"store_memory":false,"importance":0.1,"emotion":"neutral","topic":"social_interaction","memory_queries":[],"confidence":0.98}
+Output: {"respond":false,"interrupt":false,"priority":"low","speech_type":"background","social_attention":0.1,"addressed_to_ai":false,"store_memory":false,"importance":0.1,"emotion":"neutral","topic":"social_interaction","memory_queries":[],"confidence":0.98}
+
+Input: "Stop talking, I need to focus."
+Output: {"respond":true,"interrupt":true,"priority":"high","speech_type":"direct_address","social_attention":1.0,"addressed_to_ai":true,"store_memory":false,"importance":0.5,"emotion":"frustrated","topic":"focus","memory_queries":[],"confidence":0.99}
+
+Input: "Umm... wait..."
+Output: {"respond":false,"interrupt":false,"priority":"low","speech_type":"filler","social_attention":0.8,"addressed_to_ai":true,"store_memory":false,"importance":0.1,"emotion":"neutral","topic":"general","memory_queries":[],"confidence":0.9}
 
 Analyze the user's input and fill the JSON with appropriate values. Output ONLY valid JSON.
 """
@@ -329,6 +346,7 @@ class CognitiveGateway:
 
         for key in (
             "respond",
+            "interrupt",
             "addressed_to_ai",
             "store_memory",
         ):
@@ -343,6 +361,7 @@ class CognitiveGateway:
         for key in (
             "importance",
             "confidence",
+            "social_attention",
         ):
 
             if key not in decision:
@@ -367,6 +386,8 @@ class CognitiveGateway:
         for key in (
             "emotion",
             "topic",
+            "priority",
+            "speech_type",
         ):
 
             value = decision.get(key)
@@ -383,7 +404,24 @@ class CognitiveGateway:
             value = value[:32]
 
             if value:
+                # Basic enum validation
+                if key == "priority" and value not in ("low", "medium", "high"):
+                    value = "medium"
+                elif key == "speech_type" and value not in ("direct_address", "background", "filler", "ambient", "conversation"):
+                    value = "direct_address"
+                
                 result[key] = value
+
+        # If it's a direct address, we MUST respond. This overrides the small model's mistakes.
+        if result.get("speech_type") == "direct_address":
+            result["respond"] = True
+
+        # Prevent storing trivial interactions in LTM
+        trivial_topics = {"hello", "hi", "greeting", "greetings", "general", "smalltalk"}
+        if result.get("topic") in trivial_topics or result.get("speech_type") in ("filler", "ambient", "background"):
+            result["store_memory"] = False
+            if result.get("importance", 0.0) > 0.4:
+                result["importance"] = 0.2
 
         # -------------------------------------------------------------------
         # Memory queries

@@ -17,6 +17,7 @@ import threading
 import numpy as np
 import sounddevice as sd
 
+from audio.echo_cancellation import AECProvider
 from utils.logging_setup import get_logger
 
 log = get_logger("audio.playback")
@@ -42,6 +43,7 @@ class AudioPlayback:
         channels: int = 1,
         dtype: str = "float32",
         device_index: int | None = None,
+        aec: AECProvider | None = None,
     ):
         self.audio_queue = audio_queue
         self.playback_active_event = playback_active_event
@@ -49,6 +51,7 @@ class AudioPlayback:
         self.channels = channels
         self.dtype = dtype
         self.device_index = device_index
+        self._aec = aec
 
         self._running = False
         self._stream: sd.OutputStream | None = None
@@ -74,6 +77,8 @@ class AudioPlayback:
             if audio_chunk is None:
                 # Sentinel: end of this TTS segment
                 self.playback_active_event.clear()
+                if self._aec:
+                    self._aec.set_reference_active(False)
                 # Notify pipeline that playback is done
                 try:
                     from core.events import EventType, get_bus
@@ -88,6 +93,8 @@ class AudioPlayback:
     async def _play_chunk(self, audio: np.ndarray) -> None:
         """Play a single audio chunk synchronously (in threadpool)."""
         self.playback_active_event.set()
+        if self._aec:
+            self._aec.set_reference_active(True)
         self._interrupted = False
 
         loop = asyncio.get_event_loop()
@@ -127,6 +134,8 @@ class AudioPlayback:
                 break
 
         self.playback_active_event.clear()
+        if self._aec:
+            self._aec.set_reference_active(False)
         log.info(f"[Playback] Cleared {cleared} queued chunks")
 
     def stop(self) -> None:

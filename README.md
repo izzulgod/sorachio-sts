@@ -70,9 +70,18 @@ The system is designed from the ground up as a **scalable AI companion operating
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Sorachio-STS Pipeline                        │
 │                                                                 │
-│  ┌──────────┐    ┌──────────────┐    ┌─────────────────────┐    │
-│  │Microphone│───▶│ AudioCapture │───▶│   STT Queue         │    │
-│  └──────────┘    │    (VAD)     │    │   (asyncio.Queue)   │    │
+│  ┌──────────┐    ┌─────────────────────────────────────────┐    │
+│  │Microphone│───▶│ Acoustic Gate (RMS/dBFS)                │    │
+│  └──────────┘    └─────────────┬───────────────────────────┘    │
+│                                ▼                                │
+│                  ┌─────────────────────────────────────────┐    │
+│                  │ Acoustic Echo Cancellation (AEC)        │    │
+│                  │ Reference Signal <─────── Playback      │    │
+│                  └─────────────┬───────────────────────────┘    │
+│                                ▼                                │
+│                  ┌──────────────┐    ┌─────────────────────┐    │
+│                  │ AudioCapture │───▶│   STT Queue         │    │
+│                  │    (VAD)     │    │   (asyncio.Queue)   │    │
 │                  └──────────────┘    └────────┬────────────┘    │
 │                        │ interrupt            │                 │
 │                        ▼                      ▼                 │
@@ -158,6 +167,12 @@ Python Orchestrator (asyncio event loop)
 [User speaks]
     |
     v PCM bytes (16kHz, 16-bit mono)
+[Acoustic Gate] -- passes if volume > -40 dBFS
+    |
+    v PCM bytes
+[AEC Provider] -- suppresses echo if Playback is active
+    |
+    v clean PCM bytes
 [webrtcvad] -- silence detected --> speech segment assembled
     |
     v audio bytes

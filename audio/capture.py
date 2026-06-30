@@ -22,10 +22,21 @@ from collections.abc import Callable
 import numpy as np
 import sounddevice as sd
 import webrtcvad
+import datetime
 
+from audio.acoustic_gate import AcousticGate
+from audio.echo_cancellation import AECProvider
+from config.settings import AcousticGateConfig
 from utils.logging_setup import get_logger
 
 log = get_logger("audio.capture")
+
+# Global flag to enable raw per-frame debug print spam
+DEBUG_VERBOSE = False
+
+def _log_event(msg: str, force: bool = False) -> None:
+    if DEBUG_VERBOSE or force:
+        log.info(f"[AUDIO-EVENT] {msg}")
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +66,9 @@ class AudioCapture:
         max_speech_duration_s: int = 30,
         playback_active_event: asyncio.Event | None = None,
         interrupt_event: asyncio.Event | None = None,
+        interruption_debounce_frames: int = 3,
+        acoustic_gate_config: AcousticGateConfig | None = None,
+        aec: AECProvider | None = None,
     ):
         self.stt_queue = stt_queue
         self.interrupt_callback = interrupt_callback
@@ -68,6 +82,20 @@ class AudioCapture:
         self.max_speech_duration_s = max_speech_duration_s
         self.playback_active_event = playback_active_event
         self.interrupt_event = interrupt_event
+        self.interruption_debounce_frames = interruption_debounce_frames
+        self._aec = aec
+        
+        if acoustic_gate_config:
+            self._acoustic_gate = AcousticGate(
+                threshold_dbfs=acoustic_gate_config.threshold_dbfs,
+                enabled=acoustic_gate_config.enabled,
+                debug=acoustic_gate_config.debug,
+                hold_frames=acoustic_gate_config.hold_frames
+            )
+        else:
+            self._acoustic_gate = AcousticGate(enabled=False)
+
+        self._gate_passed_last = False
 
         # VAD requires frame sizes of 10, 20, or 30 ms
         assert chunk_duration_ms in (10, 20, 30), \
@@ -123,11 +151,13 @@ class AudioCapture:
     def mute(self) -> None:
         """Logically mute the mic — VAD runs but speech is discarded."""
         self._muted.set()
+        _log_event("Playback muted: Mic logically muted", force=True)
         log.debug("[Capture] Muted")
 
     def unmute(self) -> None:
         """Un-mute — resume sending speech segments to STT."""
         self._muted.clear()
+        _log_event("Playback unmuted: Mic logically unmuted", force=True)
         log.debug("[Capture] Unmuted")
 
     def _audio_callback(
@@ -136,21 +166,51 @@ class AudioCapture:
         """sounddevice callback — runs in audio thread."""
         if status:
             log.debug(f"[Capture] Status: {status}")
+            _log_event(f"Sounddevice callback status warning: {status}", force=True)
+        if DEBUG_VERBOSE:
+            _log_event(f"Mic callback: shape={indata.shape}, dtype={indata.dtype}, frames={frames}")
         # Ensure int16 — some Windows drivers deliver float32
         if indata.dtype != np.int16:
             indata = (indata * 32767).clip(-32768, 32767).astype(np.int16)
         # Convert to bytes for webrtcvad
         pcm_bytes = indata[:, 0].tobytes() if self.channels == 1 else indata.tobytes()
+        
+        # AEC processing
+        if self._aec:
+            pcm_bytes = self._aec.process(pcm_bytes)
+            
+        # Acoustic Gate processing
+        from audio.acoustic_gate import compute_dbfs
+        dbfs = compute_dbfs(pcm_bytes)
+        gate_result = self._acoustic_gate.gate(pcm_bytes)
+        
+        if gate_result != self._gate_passed_last:
+            self._gate_passed_last = gate_result
+            _log_event(f"Acoustic gate state changed: passed={gate_result} (dBFS={dbfs:.2f})", force=True)
+
+        if not gate_result:
+            # Enqueue a sentinel (empty bytes) so the VAD worker knows time passed.
+            try:
+                self._raw_queue.put_nowait(b"")
+                if DEBUG_VERBOSE:
+                    _log_event("Enqueued sentinel (b'')")
+            except queue.Full:
+                _log_event("VAD queue full, dropped sentinel", force=True)
+            return  # Frame dropped — below dBFS threshold
+            
         try:
             self._raw_queue.put_nowait(pcm_bytes)
+            if DEBUG_VERBOSE:
+                _log_event(f"Enqueued audio frame ({len(pcm_bytes)} bytes)")
         except queue.Full:
-            pass  # Drop frame if queue full
+            _log_event("VAD queue full, dropped audio frame", force=True)
 
     def _vad_worker(self) -> None:
         """VAD processing thread — detects speech segments."""
         speech_frames: list[bytes] = []
         triggered = False
         silent_frames = 0
+        interrupt_speech_frames = 0
         max_silent_frames = self.silence_timeout_ms // self.chunk_ms
         min_speech_frames = self.min_speech_duration_ms // self.chunk_ms
         max_frames = int(self.max_speech_duration_s * 1000 / self.chunk_ms)
@@ -158,50 +218,80 @@ class AudioCapture:
         while self._running:
             try:
                 pcm = self._raw_queue.get(timeout=0.1)
+                if DEBUG_VERBOSE:
+                    _log_event(f"VAD worker received frame: size={len(pcm)} bytes")
             except queue.Empty:
                 continue
 
-            try:
-                is_speech = self._vad.is_speech(pcm, self.sample_rate)
-            except Exception:
+            if pcm == b"":
+                # Frame was dropped by Acoustic Gate (silence)
                 is_speech = False
+                if DEBUG_VERBOSE:
+                    _log_event("VAD worker: Sentinel bypass (silence)")
+            else:
+                try:
+                    is_speech = self._vad.is_speech(pcm, self.sample_rate)
+                    if DEBUG_VERBOSE:
+                        _log_event(f"webrtcvad.is_speech={is_speech}")
+                except Exception as e:
+                    _log_event(f"VAD error: is_speech failed: {e}", force=True)
+                    log.error(f"[VAD ERROR] is_speech failed: {e}")
+                    is_speech = False
 
             if is_speech:
                 if not triggered:
                     triggered = True
+                    _log_event("VAD state: Speech started", force=True)
                     log.debug("[VAD] Speech detected")
                     if self._loop:
                         from core.events import EventType, get_bus
                         asyncio.run_coroutine_threadsafe(
                             get_bus().emit(EventType.USER_SPEECH_START, source="vad"), self._loop
                         )
-                    # Check for interrupt (speech during TTS playback)
-                    if (self.playback_active_event and
-                            self.playback_active_event.is_set() and
-                            self.interrupt_callback and
-                            self.interrupt_event):
-                        log.info("[VAD] Interrupt: speech during playback")
+                
+                # Check for interrupt (speech during TTS playback)
+                if (self.playback_active_event and
+                        self.playback_active_event.is_set() and
+                        self.interrupt_callback and
+                        self.interrupt_event):
+                    interrupt_speech_frames += 1
+                    if interrupt_speech_frames >= self.interruption_debounce_frames:
+                        _log_event(f"VAD: Interrupt detected (debounce={interrupt_speech_frames})", force=True)
+                        log.info(f"[VAD] Interrupt: speech during playback (debounce={interrupt_speech_frames})")
                         if self._loop:
                             asyncio.run_coroutine_threadsafe(
                                 self._do_interrupt(), self._loop
                             )
+                        # Reset to prevent continuous firing
+                        interrupt_speech_frames = 0
 
                 speech_frames.append(pcm)
                 silent_frames = 0
+                if DEBUG_VERBOSE:
+                    _log_event(f"speech_frames={len(speech_frames)}, silent_frames={silent_frames}")
 
                 # Max duration exceeded — flush now
                 if len(speech_frames) >= max_frames:
+                    _log_event("VAD: Max duration exceeded, flushing now", force=True)
                     self._flush_speech(speech_frames, min_speech_frames)
                     speech_frames = []
                     triggered = False
                     silent_frames = 0
 
             else:
+                interrupt_speech_frames = 0
                 if triggered:
                     silent_frames += 1
-                    speech_frames.append(pcm)
+                    if pcm:
+                        speech_frames.append(pcm)
+                    else:
+                        # Append digital silence to preserve timing for STT
+                        speech_frames.append(b'\x00' * (self._frame_size * 2))
+                    if DEBUG_VERBOSE:
+                        _log_event(f"speech_frames={len(speech_frames)}, silent_frames={silent_frames}")
 
                     if silent_frames >= max_silent_frames:
+                        _log_event(f"VAD state: Speech ended. STT Flush triggered (silent_frames={silent_frames})", force=True)
                         # End of utterance
                         self._flush_speech(speech_frames, min_speech_frames)
                         speech_frames = []
@@ -217,7 +307,10 @@ class AudioCapture:
 
     def _flush_speech(self, frames: list[bytes], min_frames: int) -> None:
         """Send accumulated speech frames to STT queue."""
+        if DEBUG_VERBOSE:
+            _log_event(f"_flush_speech: total frames={len(frames)}, min_required={min_frames}")
         if len(frames) < min_frames:
+            _log_event(f"_flush_speech discarded: too short ({len(frames)} frames < {min_frames})", force=True)
             log.debug(f"[VAD] Too short ({len(frames)} frames) — discarding")
             return
 
@@ -227,6 +320,7 @@ class AudioCapture:
         # 16kHz * 2 bytes/sample * 1 second = 32000 bytes minimum.
         min_bytes = self.sample_rate * 2 * 1  # 1 second of 16-bit mono
         if len(audio_bytes) < min_bytes:
+            _log_event(f"_flush_speech discarded: audio too short ({len(audio_bytes)} bytes < {min_bytes})", force=True)
             log.debug(
                 f"[VAD] Audio too short ({len(audio_bytes)} bytes < {min_bytes}) — discarding"
             )
@@ -234,9 +328,11 @@ class AudioCapture:
 
         # ── Mute gate: discard audio while pipeline is busy ──────────
         if self._muted.is_set():
+            _log_event(f"_flush_speech discarded: pipeline muted", force=True)
             log.debug(f"[VAD] Muted — discarding {len(frames)} frames")
             return
 
+        _log_event(f"STT enqueue: Putting {len(audio_bytes)} bytes into stt_queue", force=True)
         log.debug(f"[VAD] Flushing {len(frames)} frames ({len(audio_bytes)} bytes)")
 
         if self._loop:
@@ -248,5 +344,7 @@ class AudioCapture:
                 asyncio.run_coroutine_threadsafe(
                     self.stt_queue.put(audio_bytes), self._loop
                 ).result(timeout=1.0)
+                _log_event("STT enqueue success", force=True)
             except Exception as e:
+                _log_event(f"STT enqueue failure: {e}", force=True)
                 log.error(f"[Capture] Failed to enqueue speech: {e}")

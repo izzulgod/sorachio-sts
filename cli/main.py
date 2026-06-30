@@ -48,6 +48,7 @@ warnings.filterwarnings("ignore", message=".*words count mismatch.*")
 for _noisy in (
     "httpx", "kokoro", "urllib3", "whisper", "faster_whisper",
     "cognition.gateway", "phonemizer", "espeak", "numba",
+    "huggingface_hub",
 ):
     logging.getLogger(_noisy).setLevel(logging.ERROR)
 
@@ -118,6 +119,7 @@ def _setup_logging(settings):
     for _noisy in (
         "httpx", "kokoro", "urllib3", "whisper", "faster_whisper",
         "cognition.gateway", "phonemizer", "espeak", "numba",
+        "huggingface_hub",
     ):
         logging.getLogger(_noisy).setLevel(logging.ERROR)
 
@@ -206,6 +208,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
     for _noisy in (
         "httpx", "kokoro", "urllib3", "whisper", "faster_whisper",
         "cognition.gateway", "phonemizer", "espeak", "numba",
+        "huggingface_hub",
     ):
         logging.getLogger(_noisy).setLevel(logging.ERROR)
 
@@ -488,12 +491,15 @@ class VoiceCLI:
         # ── Always stop spinner BEFORE printing anything ──────────────
         self._spin_stop()
 
-        decision   = event.data
-        emotion    = decision.get("emotion",      "neutral")
-        respond    = decision.get("respond",      True)
-        memory     = decision.get("store_memory", False)
-        topic      = decision.get("topic",        "general")
-        confidence = decision.get("confidence",   0.5)
+        decision         = event.data
+        emotion          = decision.get("emotion",          "neutral")
+        respond          = decision.get("respond",          True)
+        memory           = decision.get("store_memory",     False)
+        topic            = decision.get("topic",            "general")
+        confidence       = decision.get("confidence",       0.5)
+        priority         = decision.get("priority",         "medium")
+        speech_type      = decision.get("speech_type",      "direct_address")
+        social_attention = decision.get("social_attention", 0.5)
 
         icon, emo_color = self._EMOTION_ICON.get(emotion, ("○", "bright_black"))
 
@@ -528,6 +534,23 @@ class VoiceCLI:
         # Topic pill
         t_pill = f"[dim on grey11]  topic: {topic}  [/]"
 
+        # Priority pill
+        _PRIORITY_COLORS = {
+            "low": "dim",
+            "medium": "yellow",
+            "high": "bold white on red",
+        }
+        p_color = _PRIORITY_COLORS.get(priority, "yellow")
+        p_pill = f"[{p_color}] ⚡ {priority} [/]"
+
+        # Speech type pill
+        st_pill = f"[dim on grey15] {speech_type} [/]"
+
+        # Social attention bar
+        sa_filled = round(social_attention * 5)
+        sa_bar = "[cyan]" + "█" * sa_filled + "[/cyan]" + "[dim]" + "░" * (5 - sa_filled) + "[/dim]"
+        sa_pill = f"[dim]attn[/dim] {sa_bar}"
+
         # Confidence bar (8 blocks)
         filled   = round(confidence * 8)
         conf_bar = "[green]" + "█" * filled + "[/green]" + "[dim]" + "░" * (8 - filled) + "[/dim]"
@@ -538,8 +561,11 @@ class VoiceCLI:
             "\n[bold dim]  >>> STATUS[/bold dim]  "
             + emo_pill
             + sep + r_pill
+            + sep + p_pill
             + sep + m_pill
+            + sep + st_pill
             + sep + t_pill
+            + sep + sa_pill
             + sep + f"[dim]conf[/dim] {conf_bar}"
         )
 

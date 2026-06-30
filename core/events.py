@@ -45,6 +45,9 @@ class EventType(Enum):
     USER_SPEECH_START = auto()
     USER_SPEECH_END = auto()
     INTERRUPT = auto()
+    BARGE_IN = auto()
+    ACOUSTIC_GATE_DROP = auto()
+    AEC_ACTIVE = auto()
 
     # STT
     STT_RESULT = auto()

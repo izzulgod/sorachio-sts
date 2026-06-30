@@ -78,11 +78,18 @@ class ContextManager:
                 top_k=self.max_ltm_in_prompt,
             )
 
+        # Check if the most recent STM entry was an interrupt
+        recent_entries = await self.stm.get_recent(1)
+        was_interrupted = False
+        if recent_entries and recent_entries[-1].metadata.get("interrupted"):
+            was_interrupted = True
+
         # Build system prompt
         system_content = self._build_system_prompt(
             emotion=emotion,
             topic=topic,
             ltm_entries_text=self.ltm.format_for_context(ltm_entries),
+            was_interrupted=was_interrupted,
         )
 
         # Build message list
@@ -109,6 +116,7 @@ class ContextManager:
         emotion: str,
         topic: str,
         ltm_entries_text: str,
+        was_interrupted: bool = False,
     ) -> str:
         """Construct the system prompt with all contextual additions."""
         parts = [self.personality_prompt.strip()]
@@ -129,6 +137,13 @@ class ContextManager:
         # LTM memories
         if ltm_entries_text:
             parts.append(f"\n{ltm_entries_text}")
+
+        # Interruption context
+        if was_interrupted:
+            parts.append(
+                "\n[Context: Your previous response was interrupted by the user. "
+                "Acknowledge the interruption if natural, and keep your next response brief.]"
+            )
 
         parts.append(
             f"\nYou are {self.companion_name}. Respond naturally in 1-3 spoken sentences. "

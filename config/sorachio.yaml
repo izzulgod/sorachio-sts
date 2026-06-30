@@ -24,6 +24,32 @@ audio:
     min_speech_duration_ms: 500
     max_speech_duration_s: 30
 
+    # -----------------------------------------------------------------
+    # Acoustic Gate — pre-VAD energy filter
+    # Drops frames below the dBFS threshold before they reach webrtcvad.
+    # Calibration guide:
+    #   -50 dBFS : very quiet room, sensitive mic
+    #   -40 dBFS : normal room, moderate mic (default)
+    #   -30 dBFS : noisy environment / open speaker setup
+    # Set debug: true to see live dBFS values in logs (verbose!).
+    # -----------------------------------------------------------------
+    acoustic_gate:
+      enabled: true
+      threshold_dbfs: -50.0
+      debug: true
+      hold_frames: 15
+
+  # -------------------------------------------------------------------
+  # Acoustic Echo Cancellation (AEC) Scaffold
+  # Prevents the assistant from hearing its own TTS output.
+  # provider: "null"          — passthrough, zero overhead (default)
+  # provider: "simple_energy" — amplitude attenuation during playback
+  # -------------------------------------------------------------------
+  echo_cancellation:
+    enabled: false
+    provider: "null"           # "null" | "simple_energy"
+    attenuation_factor: 0.3    # Only used by simple_energy (0.0–1.0)
+
   playback:
     sample_rate: 24000        # Kokoro native output rate
     channels: 1
@@ -53,8 +79,8 @@ llm:
   cognitive_gateway:
     server_url: "http://127.0.0.1:8001"
     model_path: "models/llm1/Qwen3-0.6B-Q8_0.gguf"
-    n_ctx: 512
-    n_threads: 6
+    n_ctx: 1024
+    n_threads: 8
     n_gpu_layers: 0            # Set >0 for GPU offload
     temperature: 0.1           # Low temp for consistent JSON
     max_tokens: 128
@@ -65,11 +91,11 @@ llm:
   personality_core:
     server_url: "http://127.0.0.1:8002"
     model_path: "models/llm2/gemma-3-1b-it-Q8_0.gguf"
-    n_ctx: 2048
-    n_threads: 6
+    n_ctx: 1024
+    n_threads: 12
     n_gpu_layers: 0
     temperature: 0.7
-    max_tokens: 512
+    max_tokens: 256
     top_p: 0.95
     repeat_penalty: 1.1
     timeout_s: 60.0            
@@ -145,7 +171,9 @@ queues:
 # Pipeline Configuration
 # =============================================================================
 pipeline:
-  enable_interruption: false
-  interruption_vad_aggressiveness: 3  # More aggressive during playback
+  enable_interruption: true            # Barge-in: stop TTS when user speaks
+  interruption_vad_aggressiveness: 3   # More aggressive VAD during playback
+  interruption_debounce_frames: 10     # Consecutive speech frames before interrupt fires
+                                       # (10 frames × 30ms = 300ms debounce window)
   startup_greeting: true
   startup_message: "Hello! I'm Sorachio, your AI companion. I'm ready to chat."

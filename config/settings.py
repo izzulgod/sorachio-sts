@@ -15,6 +15,14 @@ from pydantic import BaseModel, Field, field_validator
 # Sub-models
 # ---------------------------------------------------------------------------
 
+class AcousticGateConfig(BaseModel):
+    """Pre-VAD energy gate configuration."""
+    enabled: bool = True
+    threshold_dbfs: float = -40.0
+    debug: bool = False
+    hold_frames: int = 15
+
+
 class AudioCaptureConfig(BaseModel):
     sample_rate: int = 16000
     channels: int = 1
@@ -24,6 +32,14 @@ class AudioCaptureConfig(BaseModel):
     vad_aggressiveness: int = 2
     min_speech_duration_ms: int = 500
     max_speech_duration_s: int = 30
+    acoustic_gate: AcousticGateConfig = Field(default_factory=AcousticGateConfig)
+
+
+class EchoCancellationConfig(BaseModel):
+    """AEC scaffold configuration."""
+    enabled: bool = False
+    provider: str = "null"            # "null" | "simple_energy"
+    attenuation_factor: float = 0.3   # Used by simple_energy only
 
 
 class AudioPlaybackConfig(BaseModel):
@@ -37,6 +53,7 @@ class AudioPlaybackConfig(BaseModel):
 class AudioConfig(BaseModel):
     capture: AudioCaptureConfig = Field(default_factory=AudioCaptureConfig)
     playback: AudioPlaybackConfig = Field(default_factory=AudioPlaybackConfig)
+    echo_cancellation: EchoCancellationConfig = Field(default_factory=EchoCancellationConfig)
 
 
 class STTConfig(BaseModel):
@@ -63,7 +80,7 @@ class LLMInstanceConfig(BaseModel):
     server_url: str
     model_path: str
     n_ctx: int = 2048
-    n_threads: int = 4
+    n_threads: int = 12
     n_gpu_layers: int = 0
     temperature: float = 0.7
     max_tokens: int = 512
@@ -143,6 +160,7 @@ class QueueConfig(BaseModel):
 class PipelineConfig(BaseModel):
     enable_interruption: bool = True
     interruption_vad_aggressiveness: int = 3
+    interruption_debounce_frames: int = 10   # Consecutive speech frames before barge-in fires
     startup_greeting: bool = True
     startup_message: str = "Hello! I'm Sorachio. I'm ready to chat."
 

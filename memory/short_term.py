@@ -28,12 +28,16 @@ log = get_logger("memory.stm")
 
 @dataclass
 class STMEntry:
-    role: str                       # "user" | "assistant"
+    role: str                       # "user" | "assistant" | "system"
     content: str
     timestamp: datetime = field(default_factory=datetime.now)
     emotion: str = "neutral"
     topic: str = "general"
     importance: float = 0.5
+    # Generic metadata bag — supports interrupt markers, sensor events,
+    # vision data, and any future structured annotations.
+    # Example: {"interrupted": True} or {"vision": "face_detected"}
+    metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -75,6 +79,7 @@ class ShortTermMemory:
         emotion: str = "neutral",
         topic: str = "general",
         importance: float = 0.5,
+        metadata: dict | None = None,
     ) -> None:
         """Add a message to the rolling window."""
         async with self._lock:
@@ -84,6 +89,7 @@ class ShortTermMemory:
                 emotion=emotion,
                 topic=topic,
                 importance=importance,
+                metadata=metadata or {},
             )
             self._window.append(entry)
             if role == "user":

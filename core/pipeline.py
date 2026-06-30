@@ -179,7 +179,18 @@ class SorachioPipeline:
         # ---- Audio Capture ----
         from audio.capture import AudioCapture
         from audio.playback import AudioPlayback
+        from audio.echo_cancellation import create_aec
         audio_cfg = cfg.audio
+
+        # Create AEC provider
+        aec_cfg = audio_cfg.echo_cancellation
+        if aec_cfg.enabled:
+            aec_provider = create_aec(
+                provider=aec_cfg.provider,
+                attenuation_factor=aec_cfg.attenuation_factor
+            )
+        else:
+            aec_provider = create_aec("null")
 
         self._capture = AudioCapture(
             stt_queue=self._stt_queue,
@@ -194,6 +205,9 @@ class SorachioPipeline:
             max_speech_duration_s=audio_cfg.capture.max_speech_duration_s,
             playback_active_event=self._playback_active_event,
             interrupt_event=self._interrupt_event if cfg.pipeline.enable_interruption else None,
+            interruption_debounce_frames=cfg.pipeline.interruption_debounce_frames,
+            acoustic_gate_config=audio_cfg.capture.acoustic_gate,
+            aec=aec_provider,
         )
 
         self._playback = AudioPlayback(
@@ -203,6 +217,7 @@ class SorachioPipeline:
             channels=audio_cfg.playback.channels,
             dtype=audio_cfg.playback.dtype,
             device_index=audio_cfg.playback.device_index,
+            aec=aec_provider,
         )
 
         log.info("[Pipeline] All components initialized [OK]")
@@ -358,6 +373,15 @@ class SorachioPipeline:
         log.info("[Pipeline] Interrupt triggered")
         self._interrupt_event.set()
         self._playback.interrupt()
+        
+        # Inject interruption metadata into STM
+        if self._stm:
+            from datetime import datetime
+            await self._stm.add(
+                role="system",
+                content="[Interrupted by user]",
+                metadata={"interrupted": True, "interrupted_at": datetime.now().isoformat()}
+            )
 
         # Clear TTS chunk queue
         while not self._tts_chunk_queue.empty():
