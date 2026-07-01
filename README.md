@@ -34,12 +34,13 @@ In text mode, you can chat with the companion using keyboard inputs. This mode i
 8. [Running the System](#8-running-the-system)
 9. [Configuration Guide](#9-configuration-guide)
 10. [Cognitive Gateway Explained](#10-cognitive-gateway-explained)
-11. [Streaming Pipeline Explained](#11-streaming-pipeline-explained)
-12. [Memory Architecture](#12-memory-architecture)
-13. [CLI Reference](#13-cli-reference)
-14. [MBG System](#14-mbg-system)
-15. [Troubleshooting](#15-troubleshooting)
-16. [Future Robotics Expansion](#16-future-robotics-expansion)
+11. [Acoustic Intelligence Layer](#11-acoustic-intelligence-layer)
+12. [Streaming Pipeline Explained](#12-streaming-pipeline-explained)
+13. [Memory Architecture](#13-memory-architecture)
+14. [CLI Reference](#14-cli-reference)
+15. [MBG System](#15-mbg-system)
+16. [Troubleshooting](#16-troubleshooting)
+17. [Future Robotics Expansion](#17-future-robotics-expansion)
 
 ---
 
@@ -637,7 +638,21 @@ This reduces latency from ~3s to ~0.3s for the cognitive decision.
 
 ---
 
-## 11. Streaming Pipeline Explained
+## 11. Acoustic Intelligence Layer
+
+Before audio reaches the STT or Cognitive layers, it passes through the **Acoustic Intelligence Layer**. This acts as the first line of defense against wasting compute cycles on background noise.
+
+### Components
+
+1. **Acoustic Gate (RMS/dBFS)**: Computes the actual volume of every audio frame. If the volume is below the threshold (e.g. `-40.0 dBFS`), the frame is instantly dropped.
+2. **VAD Synchronization (Sentinels)**: When the Acoustic Gate drops a frame, it injects an empty "sentinel" byte frame into the pipeline. This allows the VAD to realize that time is passing (silence) without processing actual audio bytes, preventing pipeline deadlocks while saving CPU.
+3. **Acoustic Echo Cancellation (AEC)**: If playback is active, the speaker output is subtracted from the microphone input to prevent the system from hearing itself.
+
+By stopping noise at the gate, we prevent meaningless STT transcriptions (like `[wind blowing]`, `(clears throat)`) and save the Cognitive Gateway from having to process them.
+
+---
+
+## 12. Streaming Pipeline Explained
 
 Sorachio begins **speaking before it finishes thinking**. Here's how:
 
@@ -673,7 +688,7 @@ Chunks are assembled by:
 
 ---
 
-## 12. Memory Architecture
+## 13. Memory Architecture
 
 ### Short-Term Memory (STM)
 
@@ -707,7 +722,7 @@ The LTM is designed for easy migration to ChromaDB, FAISS, or Qdrant. Each `LTME
 
 ---
 
-## 13. CLI Reference
+## 14. CLI Reference
 
 ```bash
 # Full voice mode
@@ -736,7 +751,7 @@ python main.py memory clear [--yes]
 
 ---
 
-## 14. MBG System
+## 15. MBG System
 
 ### What is MBG?
 
@@ -787,7 +802,7 @@ python mbg.py --version
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 ### "Python version outside compatible range"
 
@@ -869,7 +884,7 @@ For faster response:
 
 ---
 
-## 16. Future Robotics Expansion
+## 17. Future Robotics Expansion
 
 Sorachio-STS is architected as the **brain** of a future companion robot.
 

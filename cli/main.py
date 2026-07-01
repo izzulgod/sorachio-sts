@@ -321,7 +321,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
     # ------------------------------------------------------------------
 
     if single_message:
-        console.print(f"[bold cyan]You:[/bold cyan] {single_message}\n")
+        console.print(f"\n[bold cyan]You[/bold cyan]\n└─ {single_message}\n")
         voice_cli.start()
         response_ready.clear()
         await get_bus().emit(EventType.STT_RESULT, data=single_message, source="cli")
@@ -336,9 +336,10 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
         while True:
             try:
                 # Ask without Live running
+                console.print("\n[bold cyan]You[/bold cyan]")
                 user_input = await asyncio.get_running_loop().run_in_executor(
                     None,
-                    lambda: input("You > ")
+                    lambda: input("└─ ")
                 )
 
                 user_input = user_input.strip()
@@ -503,90 +504,110 @@ class VoiceCLI:
 
         icon, emo_color = self._EMOTION_ICON.get(emotion, ("○", "bright_black"))
 
-        # ── Pill/capsule background colors ────────────────────────────
-        #   Use Rich's "on <bg>" syntax for the filled-pill look.
-        #   Emotion pill
-        _EMO_BG = {
-            "neutral":    "grey23",
-            "happy":      "dark_goldenrod",
-            "sad":        "navy_blue",
-            "anxious":    "purple4",
-            "frustrated": "dark_red",
-            "excited":    "dark_orange3",
-            "confused":   "dark_cyan",
-            "tired":      "grey15",
-        }
-        emo_bg   = _EMO_BG.get(emotion, "grey23")
-        emo_pill = f"[bold white on {emo_bg}] {icon} {emotion} [/]"
+        if self.mode == "run":
+            # ── Pill/capsule background colors ────────────────────────────
+            #   Use Rich's "on <bg>" syntax for the filled-pill look.
+            #   Emotion pill
+            _EMO_BG = {
+                "neutral":    "grey23",
+                "happy":      "dark_goldenrod",
+                "sad":        "navy_blue",
+                "anxious":    "purple4",
+                "frustrated": "dark_red",
+                "excited":    "dark_orange3",
+                "confused":   "dark_cyan",
+                "tired":      "grey15",
+            }
+            emo_bg   = _EMO_BG.get(emotion, "grey23")
+            emo_pill = f"[bold white on {emo_bg}] {icon} {emotion} [/]"
 
-        # Respond pill
-        if respond:
-            r_pill = "[bold white on dark_green] ✓ respond [/]"
+            # Respond pill
+            if respond:
+                r_pill = "[bold white on dark_green] ✓ respond [/]"
+            else:
+                r_pill = "[bold white on dark_red] ✗ ignore [/]"
+
+            # Memory pill
+            if memory:
+                m_pill = "[bold white on dark_cyan] ⊛ memory [/]"
+            else:
+                m_pill = "[dim on grey15]  ○ memory [/]"
+
+            # Topic pill
+            t_pill = f"[dim on grey11]  topic: {topic}  [/]"
+
+            # Priority pill
+            _PRIORITY_COLORS = {
+                "low": "dim",
+                "medium": "yellow",
+                "high": "bold white on red",
+            }
+            p_color = _PRIORITY_COLORS.get(priority, "yellow")
+            p_pill = f"[{p_color}] ⚡ {priority} [/]"
+
+            # Confidence bar (8 blocks)
+            filled   = round(confidence * 8)
+            conf_bar = "[green]" + "█" * filled + "[/green]" + "[dim]" + "░" * (8 - filled) + "[/dim]"
+
+            # ── Print the status capsule row ──────────────────────────────
+            sep = "  [dim][/dim]  "
+            console.print(
+                "\n[bold dim]  >>> STATUS[/bold dim]  "
+                + emo_pill
+                + sep + r_pill
+                + sep + p_pill
+                + sep + m_pill
+                + sep + t_pill
+                + sep + f"[dim]conf[/dim] {conf_bar}"
+            )
         else:
-            r_pill = "[bold white on dark_red] ✗ ignore [/]"
-
-        # Memory pill
-        if memory:
-            m_pill = "[bold white on dark_cyan] ⊛ memory [/]"
-        else:
-            m_pill = "[dim on grey15]  ○ memory [/]"
-
-        # Topic pill
-        t_pill = f"[dim on grey11]  topic: {topic}  [/]"
-
-        # Priority pill
-        _PRIORITY_COLORS = {
-            "low": "dim",
-            "medium": "yellow",
-            "high": "bold white on red",
-        }
-        p_color = _PRIORITY_COLORS.get(priority, "yellow")
-        p_pill = f"[{p_color}] ⚡ {priority} [/]"
-
-        # Speech type pill
-        st_pill = f"[dim on grey15] {speech_type} [/]"
-
-        # Social attention bar
-        sa_filled = round(social_attention * 5)
-        sa_bar = "[cyan]" + "█" * sa_filled + "[/cyan]" + "[dim]" + "░" * (5 - sa_filled) + "[/dim]"
-        sa_pill = f"[dim]attn[/dim] {sa_bar}"
-
-        # Confidence bar (8 blocks)
-        filled   = round(confidence * 8)
-        conf_bar = "[green]" + "█" * filled + "[/green]" + "[dim]" + "░" * (8 - filled) + "[/dim]"
-
-        # ── Print the status capsule row ──────────────────────────────
-        sep = "  [dim][/dim]  "
-        console.print(
-            "\n[bold dim]  >>> STATUS[/bold dim]  "
-            + emo_pill
-            + sep + r_pill
-            + sep + p_pill
-            + sep + m_pill
-            + sep + st_pill
-            + sep + t_pill
-            + sep + sa_pill
-            + sep + f"[dim]conf[/dim] {conf_bar}"
-        )
+            # ── Text mode tree layout ─────────────────────────────────────
+            # Confidence bar (8 blocks)
+            c_filled = round(confidence * 8)
+            conf_bar = "█" * c_filled + "░" * (8 - c_filled)
+            
+            intent_str = "respond" if respond else "ignore"
+            mem_str = "true" if memory else "false"
+            
+            console.print("\n[bold magenta]Cognition[/bold magenta]")
+            console.print(f"├─ mood        {emotion}")
+            console.print(f"├─ intent      {intent_str}")
+            console.print(f"├─ energy      {priority}")
+            console.print(f"├─ memory      {mem_str}")
+            console.print(f"├─ topic       {topic}")
+            console.print(f"└─ confidence  {conf_bar}\n")
+            
+            if not respond:
+                console.print("[dim][ IGNORED ][/dim]")
+                console.print("[dim]Low-priority input filtered by cognitive layer.[/dim]\n")
+                console.print("────────────────────────────────────────")
 
         if respond:
             self._spin_start(f"{icon} Composing…", emo_color)
         elif self.mode == "run":
             # In run mode, don't wait for a response that won't come — go back to listening
             self._spin_start("Listening…", "cyan")
-        # In text mode + ignore: stop() will be called by _on_cognitive_local
 
     async def on_response_start(self, event) -> None:
         self.response_text = ""
+        self._spin_stop()
+        if self.mode == "text":
+            console.print("[bold green]Sorachio[/bold green]\n└─ ", end="")
+        else:
+            console.print("\n[bold cyan]Sorachio:[/bold cyan] ", end="")
 
     async def on_token(self, event) -> None:
-        self.response_text += event.data
+        token = event.data
+        self.response_text += token
+        if self.mode == "text":
+            token = token.replace("\n", "\n   ")
+        console.print(token, end="", highlight=False)
 
     async def on_response_end(self, event) -> None:
-        # Stop composing spinner → print clean response → restart listening
-        self._spin_stop()
-        console.print(f"\n[bold cyan]Sorachio:[/bold cyan] {self.response_text}\n")
-        if self.mode == "run":
+        console.print()  # Final newline for the response
+        if self.mode == "text":
+            console.print("\n────────────────────────────────────────")
+        elif self.mode == "run":
             self._spin_start("Listening…", "cyan")
 
     async def on_interrupt(self, event) -> None:
