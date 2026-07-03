@@ -422,7 +422,7 @@ class VoiceCLI:
         """Start a fresh transient Live spinner. Stops any existing one first."""
         self._spin_stop()
         self._live = Live(
-            Spinner("dots", text=f"[{color}]{label}[/{color}]", style=color),
+            Spinner("line", text=f"[{color}]{label}[/{color}]", style=color),
             console=console,
             refresh_per_second=14,
             transient=True,   # clears itself completely when stopped
@@ -442,7 +442,7 @@ class VoiceCLI:
         """Update label of the running spinner without restarting."""
         if self._live is not None:
             self._live.update(
-                Spinner("dots", text=f"[{color}]{label}[/{color}]", style=color)
+                Spinner("line", text=f"[{color}]{label}[/{color}]", style=color)
             )
 
     # ── lifecycle ─────────────────────────────────────────────────────
@@ -632,7 +632,7 @@ async def _run_pipeline(settings, voice_mode=True, no_servers=False):
         srv_mgr = ServerManager(settings.llm, root)
 
         with Live(
-            Spinner("dots", text="[cyan]Booting models...[/cyan]"),
+            Spinner("line", text="[cyan]Booting models...[/cyan]"),
             console=console,
             refresh_per_second=12,
             transient=True,   # disappears cleanly when done

@@ -98,6 +98,9 @@ Output: {"respond":false,"interrupt":false,"priority":"low","speech_type":"backg
 Input: "Stop talking, I need to focus."
 Output: {"respond":true,"interrupt":true,"priority":"high","speech_type":"direct_address","social_attention":1.0,"addressed_to_ai":true,"store_memory":false,"importance":0.5,"emotion":"frustrated","topic":"focus","memory_queries":[],"confidence":0.99}
 
+Input: "Who made you?"
+Output: {"respond":true,"interrupt":false,"priority":"medium","speech_type":"direct_address","social_attention":1.0,"addressed_to_ai":true,"store_memory":false,"importance":0.2,"emotion":"curious","topic":"origin","memory_queries":[],"confidence":0.95}
+
 Input: "Umm... wait..."
 Output: {"respond":false,"interrupt":false,"priority":"low","speech_type":"filler","social_attention":0.8,"addressed_to_ai":true,"store_memory":false,"importance":0.1,"emotion":"neutral","topic":"general","memory_queries":[],"confidence":0.9}
 
@@ -412,9 +415,10 @@ class CognitiveGateway:
                 
                 result[key] = value
 
-        # If it's a direct address, we MUST respond. This overrides the small model's mistakes.
-        if result.get("speech_type") == "direct_address":
-            result["respond"] = True
+        # If the model explicitly set respond=False, trust it unless it's a high priority direct address
+        if not result.get("respond"):
+            if result.get("speech_type") == "direct_address" and result.get("priority") == "high":
+                result["respond"] = True
 
         # Prevent storing trivial interactions in LTM
         trivial_topics = {"hello", "hi", "greeting", "greetings", "general", "smalltalk"}
