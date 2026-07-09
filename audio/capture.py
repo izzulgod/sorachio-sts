@@ -113,8 +113,41 @@ class AudioCapture:
         # but audio never reaches the STT queue.
         self._muted = threading.Event()
 
+        # ── Probe audio input device at init ─────────────────────
+        self._audio_available = self._probe_input_device()
+        if not self._audio_available:
+            log.warning(
+                "[Capture] No audio input device found — "
+                "mic capture disabled (WSL / headless detected). "
+                "Use text mode instead."
+            )
+
+    def _probe_input_device(self) -> bool:
+        """Return True if we can open an input stream on the target device."""
+        try:
+            dev = self.device_index  # None ⟹ default device
+            info = sd.query_devices(dev, kind="input")
+            if info is None:
+                return False
+            test = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype="int16",
+                blocksize=self._frame_size,
+                device=dev,
+            )
+            test.close()
+            return True
+        except (sd.PortAudioError, OSError, Exception):
+            return False
+
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start capture in background threads."""
+        if not self._audio_available:
+            log.info("[Capture] Skipped — no audio input device")
+            self._loop = loop
+            return
+
         self._loop = loop
         self._running = True
 

@@ -33,6 +33,10 @@ class AudioPlayback:
 
     Consumes numpy audio arrays from a queue and plays them via sounddevice.
     Interrupt clears the queue and stops playback immediately.
+
+    When no audio output device is available (e.g. WSL / headless Linux),
+    playback is silently skipped while the queue is still drained so the
+    pipeline never deadlocks.
     """
 
     def __init__(
@@ -58,10 +62,51 @@ class AudioPlayback:
         self._stream_lock = threading.Lock()
         self._interrupted = False
 
+        # ── Probe audio availability at init ─────────────────────────
+        self._audio_available = self._probe_audio_device()
+        if not self._audio_available:
+            log.warning(
+                "[Playback] No audio output device found — "
+                "playback disabled (WSL / headless detected). "
+                "TTS text will still be generated."
+            )
+
+    # ------------------------------------------------------------------
+    # Audio device probe
+    # ------------------------------------------------------------------
+
+    def _probe_audio_device(self) -> bool:
+        """Return True if we can open an output stream on the target device."""
+        try:
+            # Quick check: can sounddevice query the device at all?
+            dev = self.device_index  # None ⟹ default device
+            info = sd.query_devices(dev, kind="output")
+            if info is None:
+                return False
+            # Try to open a tiny stream to confirm it actually works
+            test = sd.OutputStream(
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype=self.dtype,
+                device=dev,
+            )
+            test.close()
+            return True
+        except (sd.PortAudioError, OSError, Exception):
+            return False
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
     async def run(self) -> None:
         """Main playback loop — drain audio queue and play chunks."""
         self._running = True
-        log.info(f"[Playback] Ready — rate={self.sample_rate}Hz dtype={self.dtype}")
+
+        if self._audio_available:
+            log.info(f"[Playback] Ready — rate={self.sample_rate}Hz dtype={self.dtype}")
+        else:
+            log.info("[Playback] Running in silent mode (no audio device)")
 
         while self._running:
             try:
@@ -90,6 +135,10 @@ class AudioPlayback:
             await self._play_chunk(audio_chunk)
             self.audio_queue.task_done()
 
+    # ------------------------------------------------------------------
+    # Chunk playback
+    # ------------------------------------------------------------------
+
     async def _play_chunk(self, audio: np.ndarray) -> None:
         """Play a single audio chunk synchronously (in threadpool)."""
         self.playback_active_event.set()
@@ -97,17 +146,33 @@ class AudioPlayback:
             self._aec.set_reference_active(True)
         self._interrupted = False
 
+        # No audio device → silently consume the chunk
+        if not self._audio_available:
+            self.playback_active_event.clear()
+            if self._aec:
+                self._aec.set_reference_active(False)
+            return
+
         loop = asyncio.get_event_loop()
 
         def _blocking_play():
             try:
-                sd.play(audio, samplerate=self.sample_rate, blocking=True)
+                sd.play(
+                    audio,
+                    samplerate=self.sample_rate,
+                    device=self.device_index,
+                    blocking=True,
+                )
             except sd.PortAudioError as e:
                 log.error(f"[Playback] PortAudio error: {e}")
             except Exception as e:
                 log.error(f"[Playback] Playback error: {e}", exc_info=True)
 
         await loop.run_in_executor(None, _blocking_play)
+
+    # ------------------------------------------------------------------
+    # Interrupt / Stop
+    # ------------------------------------------------------------------
 
     def interrupt(self) -> None:
         """
@@ -118,10 +183,11 @@ class AudioPlayback:
         self._interrupted = True
 
         # Stop sounddevice
-        try:
-            sd.stop()
-        except Exception:
-            pass
+        if self._audio_available:
+            try:
+                sd.stop()
+            except Exception:
+                pass
 
         # Drain the queue
         cleared = 0
@@ -141,8 +207,10 @@ class AudioPlayback:
     def stop(self) -> None:
         """Graceful shutdown."""
         self._running = False
-        try:
-            sd.stop()
-        except Exception:
-            pass
+        if self._audio_available:
+            try:
+                sd.stop()
+            except Exception:
+                pass
         log.info("[Playback] Stopped")
+

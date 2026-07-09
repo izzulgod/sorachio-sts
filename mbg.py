@@ -23,6 +23,8 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -130,6 +132,9 @@ class MasterBootstrapGuardian:
 
         # 2. Setup virtual environment (may re-exec into venv)
         self._setup_venv()
+
+        # 2.5 Configure audio environment (WSL / PulseAudio)
+        self._setup_audio_environment()
 
         # ── Fast path: everything already ready ──────────────────────
         if not self.force and self._is_all_ready():
@@ -239,7 +244,7 @@ class MasterBootstrapGuardian:
         return True
 
     def _are_dependencies_installed(self) -> bool:
-        """Quick check: can we import critical packages?"""
+        """Quick check: can we import critical packages and find system libs?"""
         critical_packages = [
             "httpx", "aiohttp", "pydantic", "sounddevice",
             "numpy", "rich", "typer", "kokoro",
@@ -247,8 +252,14 @@ class MasterBootstrapGuardian:
         for pkg in critical_packages:
             try:
                 __import__(pkg)
-            except ImportError:
+            except (ImportError, OSError):
                 return False
+
+        if sys.platform.startswith("linux"):
+            import ctypes.util
+            if not ctypes.util.find_library("portaudio"):
+                return False
+
         return True
 
     def _setup_venv(self) -> None:
@@ -289,21 +300,178 @@ class MasterBootstrapGuardian:
         """Check if running inside a virtual environment."""
         return sys.prefix != sys.base_prefix
 
+    def _install_system_libraries(self) -> None:
+        """Install system-level C libraries required by Python packages."""
+        if not sys.platform.startswith("linux"):
+            return  # Windows/macOS bundle these or handle differently
+
+        # Map: package_manager -> list of packages to install
+        # Includes PortAudio, libsndfile, PulseAudio (backend for PortAudio),
+        # and ALSA libs/plugins so audio actually works on Linux / WSL.
+        sys_deps: dict[str, list[str]] = {
+            "apt-get": [
+                "libportaudio2", "portaudio19-dev", "libsndfile1",
+                "pulseaudio", "libpulse-dev", "libasound2-dev", "libasound2-plugins"
+            ],
+            "dnf": [
+                "portaudio", "portaudio-devel", "libsndfile",
+                "pulseaudio", "pulseaudio-libs-devel", "alsa-lib-devel", "alsa-plugins-pulseaudio"
+            ],
+            "yum": [
+                "portaudio", "portaudio-devel", "libsndfile",
+                "pulseaudio", "pulseaudio-libs-devel", "alsa-lib-devel", "alsa-plugins-pulseaudio"
+            ],
+            "pacman": [
+                "portaudio", "libsndfile",
+                "pulseaudio", "alsa-lib", "pulseaudio-alsa"
+            ],
+            "zypper": [
+                "portaudio", "portaudio-devel", "libsndfile",
+                "pulseaudio", "alsa-devel", "alsa-plugins-pulse"
+            ],
+            "apk": [
+                "portaudio-dev", "libsndfile-dev",
+                "pulseaudio-dev", "alsa-lib-dev", "alsa-plugins-pulse"
+            ],
+        }
+
+        for pm_name, packages in sys_deps.items():
+            if shutil.which(pm_name):
+                log.info(f"Installing system libraries via {pm_name}...")
+                if pm_name == "pacman":
+                    cmd = ["sudo", pm_name, "-S", "--noconfirm"] + packages
+                elif pm_name == "apk":
+                    cmd = ["sudo", pm_name, "add"] + packages
+                else:
+                    cmd = ["sudo", pm_name, "install", "-y"] + packages
+                subprocess.run(cmd, check=False)
+                return
+
+        log.warning("No supported package manager found — system libraries may be missing")
+
+    # ── WSL / Audio environment setup ────────────────────────────
+
+    @staticmethod
+    def _is_wsl() -> bool:
+        """Detect if running inside Windows Subsystem for Linux."""
+        if not sys.platform.startswith("linux"):
+            return False
+        try:
+            with open("/proc/version", "r") as f:
+                return "microsoft" in f.read().lower()
+        except OSError:
+            return False
+
+    def _setup_audio_environment(self) -> None:
+        """
+        Configure audio environment for the current platform.
+
+        On WSL this sets PULSE_SERVER so PortAudio → PulseAudio → Windows
+        audio pipeline works. Three strategies are tried in order:
+          1. WSLg socket  (/mnt/wslg/PulseServer)
+          2. User-set PULSE_SERVER (keep as-is)
+          3. TCP fallback (localhost via Windows-side PulseAudio)
+        """
+        if not self._is_wsl():
+            return  # Native Linux / Windows / macOS — no special setup needed
+
+        # Already set by user or previous run?
+        if os.environ.get("PULSE_SERVER"):
+            log.info(f"[Audio] PULSE_SERVER already set: {os.environ['PULSE_SERVER']}")
+            return
+
+        # ── Strategy 1: WSLg (Windows 11 22H2+) ──────────────────
+        wslg_socket = Path("/mnt/wslg/PulseServer")
+        if wslg_socket.exists():
+            pulse_addr = f"unix:{wslg_socket}"
+            os.environ["PULSE_SERVER"] = pulse_addr
+            log.info(f"[Audio] WSLg detected — PULSE_SERVER={pulse_addr}")
+            return
+
+        # ── Strategy 2: TCP fallback (manual PulseAudio on Windows) ─
+        # Common setup: PulseAudio server on Windows listening on TCP
+        tcp_addr = "tcp:127.0.0.1:4713"
+        os.environ["PULSE_SERVER"] = tcp_addr
+        log.warning(
+            f"[Audio] WSL detected but no WSLg socket found. "
+            f"Set PULSE_SERVER={tcp_addr} (requires PulseAudio on Windows side). "
+            f"For best results, use Windows 11 with WSLg enabled."
+        )
+
+    # ── Spinner helper (no external deps needed) ──────────────────
+
+    @staticmethod
+    def _spinner_loop(
+        stop_event: threading.Event,
+        message_func,
+    ) -> None:
+        """Background thread: render a braille-dot spinner on the same line."""
+        frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        idx = 0
+        while not stop_event.is_set():
+            msg = message_func()
+            sys.stdout.write(f"\r  {frames[idx]} {msg}")
+            sys.stdout.flush()
+            idx = (idx + 1) % len(frames)
+            stop_event.wait(0.08)
+        # Clear the spinner line when done
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
+
+    def _pip_install_one(
+        self,
+        pkg: str,
+        idx: int,
+        total: int,
+    ) -> bool:
+        """Install a single pip package with a live spinner."""
+        label = pkg.split(">=")[0].split("[")[0]  # display name without version spec
+        status_line = f"[{idx}/{total}] Installing {label}..."
+
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=self._spinner_loop,
+            args=(stop, lambda: status_line),
+            daemon=True,
+        )
+        thread.start()
+
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", pkg],
+                capture_output=True,
+                check=True,
+            )
+            stop.set()
+            thread.join()
+            log.info(f"[{idx}/{total}] ✓ {label}")
+            return True
+        except subprocess.CalledProcessError:
+            stop.set()
+            thread.join()
+            log.warning(f"[{idx}/{total}] ✗ {label} — install failed")
+            return False
+
+    # ── Dependency installation ──────────────────────────────────
+
     def _install_dependencies(self) -> None:
-        """Install required Python packages."""
+        """Install required Python packages with per-package progress."""
         if not self.force and self._are_dependencies_installed():
             log.info("Dependencies already installed, skipping")
             return
 
         log.info("Installing dependencies...")
-        
-        # Upgrade pip first
+
+        # Install system-level C libraries first (PortAudio, libsndfile, etc.)
+        self._install_system_libraries()
+
+        # Upgrade pip first (silent)
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "--upgrade", "pip"],
             capture_output=True,
-            check=True
+            check=True,
         )
-        
+
         # Core dependencies
         deps = [
             "httpx",
@@ -320,31 +488,35 @@ class MasterBootstrapGuardian:
             "python-dotenv",
             "structlog",
             "kokoro>=0.9.2",
-            "misaki[en]",         
+            "misaki[en]",
         ]
-        
-        log.info(f"Installing {len(deps)} packages...")
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install"] + deps,
-            capture_output=True,
-            check=True
-        )
-        
-        # VAD (try wheels first, fallback to source)
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "webrtcvad-wheels"],
-                capture_output=True,
-                check=True
-            )
-        except subprocess.CalledProcessError:
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "webrtcvad"],
-                capture_output=True,
-                check=True
-            )
-        
-        log.info("Dependencies installed successfully")
+
+        # VAD package (try binary wheel first)
+        vad_pkg = "webrtcvad-wheels"
+        all_deps = deps + [vad_pkg]
+        total = len(all_deps)
+
+        log.info(f"Installing {total} packages...")
+        print()  # blank line before progress
+
+        failed: list[str] = []
+        for i, pkg in enumerate(all_deps, 1):
+            ok = self._pip_install_one(pkg, i, total)
+
+            # webrtcvad-wheels failed → fallback to source build
+            if not ok and pkg == "webrtcvad-wheels":
+                log.info(f"  ↳ Falling back to webrtcvad (source build)...")
+                ok = self._pip_install_one("webrtcvad", i, total)
+
+            if not ok:
+                failed.append(pkg)
+
+        print()  # blank line after progress
+
+        if failed:
+            log.warning(f"Some packages failed to install: {', '.join(failed)}")
+        else:
+            log.info("All dependencies installed successfully")
 
     def _build_binaries(self) -> None:
         """Build external binaries (llama.cpp, whisper.cpp)."""
@@ -372,15 +544,47 @@ class MasterBootstrapGuardian:
     def _install_build_tool(self, tool: str) -> None:
         """Install a build tool using system package manager."""
         log.info(f"Installing {tool}...")
-        
+
+        installed = False
+
         if sys.platform == "darwin":
             # macOS - use Homebrew
-            subprocess.run(["brew", "install", tool], check=False)
+            if shutil.which("brew"):
+                result = subprocess.run(["brew", "install", tool], check=False)
+                installed = result.returncode == 0
+            else:
+                log.warning("Homebrew not found — cannot auto-install on macOS")
+
         elif sys.platform.startswith("linux"):
-            # Linux - use apt
-            subprocess.run(["sudo", "apt-get", "install", "-y", tool], check=False)
+            # Detect available package manager (covers Debian, Fedora, Arch, SUSE, Alpine, etc.)
+            pkg_managers = [
+                (["apt-get", "install", "-y", tool], "apt-get"),
+                (["dnf", "install", "-y", tool], "dnf"),
+                (["yum", "install", "-y", tool], "yum"),
+                (["pacman", "-S", "--noconfirm", tool], "pacman"),
+                (["zypper", "install", "-y", tool], "zypper"),
+                (["apk", "add", tool], "apk"),
+            ]
+
+            for cmd, pm_name in pkg_managers:
+                if shutil.which(pm_name):
+                    log.info(f"Using package manager: {pm_name}")
+                    result = subprocess.run(["sudo"] + cmd, check=False)
+                    installed = result.returncode == 0
+                    break
+            else:
+                log.warning("No supported package manager found (tried apt-get, dnf, yum, pacman, zypper, apk)")
+
         else:
             log.warning(f"Cannot auto-install {tool} on {sys.platform}")
+
+        # Verify the tool is actually available after install attempt
+        if not shutil.which(tool):
+            log.error(
+                f"Build tool '{tool}' is still not available after install attempt. "
+                f"Please install '{tool}' manually and re-run MBG."
+            )
+            sys.exit(1)
 
     def _build_binary(self, name: str, config: dict) -> None:
         """Build a single binary."""
@@ -459,9 +663,16 @@ class MasterBootstrapGuardian:
                     text=True,
                     timeout=5,
                 )
-                if result.returncode == 0 and self.current_arch not in result.stdout:
-                    log.warning(f"Architecture mismatch for {binary_path.name}")
-                    return False
+                if result.returncode == 0:
+                    arch = self.current_arch
+                    if arch == "x86_64":
+                        arch = "x86-64"
+                    elif arch == "aarch64":
+                        arch = "aarch64"
+                        
+                    if arch not in result.stdout and self.current_arch not in result.stdout:
+                        log.warning(f"Architecture mismatch for {binary_path.name}")
+                        return False
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass  # 'file' not available, skip arch check
 
