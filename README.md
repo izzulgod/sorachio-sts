@@ -601,27 +601,6 @@ python main.py run
 | **Chat template** | Read from GGUF metadata by llama-server (`--jinja`) |
 | **Thinking mode** | Auto-detected from template or controlled via `reasoning` config |
 
-### Recommended Models
-
-#### Cognitive Gateway (LLM #1) — Fast JSON Router
-
-Small, fast models that follow instructions well:
-
-| Model | Size | Speed | Notes |
-|-------|------|-------|-------|
-| **Qwen3.5-0.8B-Q8_0** | 774 MB | ⚡ Fast | Current default, excellent JSON output |
-| Qwen3-0.6B-Q8_0 | 639 MB | ⚡⚡ Fastest | Previous default, slightly less capable |
-| Llama-3.2-1B-Q8_0 | ~1.2 GB | ⚡ Fast | Good alternative |
-
-#### Personality Core (LLM #2) — Conversational + Vision
-
-Larger, more capable models for natural conversation:
-
-| Model | Size | Vision | Notes |
-|-------|------|--------|-------|
-| **Qwen3.5-2B-Q8_0** | 1.87 GB | ✅ (mmproj) | Current default, vision-capable |
-| gemma-3-4b-it-Q4_K_M | ~2.5 GB | ✅ (mmproj) | More capable, needs more RAM |
-| Llama-3.2-3B-Q8_0 | ~3.2 GB | ❌ | Text-only, very capable |
 
 ### STT Model (Auto-downloaded by MBG)
 
