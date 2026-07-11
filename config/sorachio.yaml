@@ -35,7 +35,7 @@ audio:
     # -----------------------------------------------------------------
     acoustic_gate:
       enabled: true
-      threshold_dbfs: -30.0
+      threshold_dbfs: -40.0
       debug: true
       hold_frames: 15
 
