@@ -503,7 +503,6 @@ class VoiceCLI:
         respond          = decision.get("respond",          True)
         memory           = decision.get("store_memory",     False)
         topic            = decision.get("topic",            "general")
-        confidence       = decision.get("confidence",       0.5)
         priority         = decision.get("priority",         "medium")
         speech_type      = decision.get("speech_type",      "direct_address")
         social_attention = decision.get("social_attention", 0.5)
@@ -564,14 +563,8 @@ class VoiceCLI:
                 + sep + p_pill
                 + sep + m_pill
                 + sep + t_pill
-                + sep + f"[dim]conf[/dim] {conf_bar}"
             )
         else:
-            # ── Text mode tree layout ─────────────────────────────────────
-            # Confidence bar (8 blocks)
-            c_filled = round(confidence * 8)
-            conf_bar = "█" * c_filled + "░" * (8 - c_filled)
-            
             intent_str = "respond" if respond else "ignore"
             mem_str = "true" if memory else "false"
             
@@ -580,8 +573,7 @@ class VoiceCLI:
             console.print(f"├─ intent      {intent_str}")
             console.print(f"├─ energy      {priority}")
             console.print(f"├─ memory      {mem_str}")
-            console.print(f"├─ topic       {topic}")
-            console.print(f"└─ confidence  {conf_bar}\n")
+            console.print(f"└─ topic       {topic}\n")
             
             if not respond:
                 console.print("[dim][ IGNORED ][/dim]")

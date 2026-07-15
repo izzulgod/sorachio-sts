@@ -60,9 +60,8 @@ class SingleServerManager:
             "--threads", str(self.config.n_threads),
             "--n-gpu-layers", str(self.config.n_gpu_layers),
             "--host", "127.0.0.1",
-            "--log-disable",       # suppress verbose server logs to console
             "--no-mmap",
-            "--jinja",             # auto-load chat template from GGUF metadata
+            "--cache-ram", "0",
         ]
 
         # Context size: 0 = auto from model metadata (llama-server default)

@@ -323,10 +323,23 @@ class SorachioPipeline:
                 log.info("[Cognitive] Interrupting current playback for new turn")
                 self._playback.interrupt()
 
+            # Vision integration: capture snapshot if requested
+            image_b64 = None
+            if decision.get("topic") == "visual_analysis" and self.settings.vision.enabled:
+                from vision.capture import capture_frame_base64
+                log.info("[Vision] Capturing snapshot from webcam...")
+                image_b64 = capture_frame_base64(
+                    device_index=self.settings.vision.device_index,
+                    max_size=self.settings.vision.max_size,
+                )
+                if not image_b64:
+                    log.warning("[Vision] Failed to capture image, proceeding with text only.")
+
             # Build context prompt
             messages = await self._context.build_prompt(
                 user_input=transcript,
                 cognitive_decision=decision,
+                image_b64=image_b64,
             )
 
             # Generate streaming response

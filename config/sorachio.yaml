@@ -11,6 +11,14 @@ system:
   data_dir: "data"
 
 # =============================================================================
+# Vision (Multimodal) Configuration
+# =============================================================================
+vision:
+  enabled: true
+  device_index: 0            # 0 is usually the default webcam
+  max_size: 512              # Resize images to this max dimension to save LLM tokens
+
+# =============================================================================
 # Audio Configuration
 # =============================================================================
 audio:
@@ -88,7 +96,7 @@ llm:
     model_dir: "models/llm1"         # Auto-scan: picks largest .gguf
     # model_path: auto-detected      # Override: set explicit path to skip auto-scan
     n_ctx: 0                         # 0 = auto from model metadata
-    n_threads: 12
+    n_threads: 8                     # 8 threads is optimal for small 0.8B models to avoid thread overhead
     n_gpu_layers: 0                  # Set >0 for GPU offload
     temperature: 0.1                 # Low temp for consistent JSON
     max_tokens: 256
@@ -103,7 +111,7 @@ llm:
     # model_path: auto-detected      # Override: set explicit path to skip auto-scan
     # mmproj_path: auto-detected     # Vision projector auto-detected if present
     n_ctx: 0                         # 0 = auto from model metadata
-    n_threads: 12
+    n_threads: 12                    # 12 threads is optimal for standard 8-core CPUs
     n_gpu_layers: 0
     temperature: 0.7
     max_tokens: 256

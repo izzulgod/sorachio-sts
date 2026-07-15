@@ -137,7 +137,7 @@ class LlamaClient:
 
     async def complete(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         temperature: float | None = None,
         max_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
@@ -176,7 +176,7 @@ class LlamaClient:
 
     async def stream(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         temperature: float | None = None,
         max_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
@@ -219,7 +219,7 @@ class LlamaClient:
 
     def _build_payload(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         temperature: float | None,
         max_tokens: int | None,
         stream: bool,

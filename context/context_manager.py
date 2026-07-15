@@ -54,29 +54,21 @@ class ContextManager:
         self,
         user_input: str,
         cognitive_decision: dict[str, Any],
-    ) -> list[dict[str, str]]:
+        image_b64: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
-        Build the full message list for LLM #2.
-
-        Args:
-            user_input: The current user speech transcript
-            cognitive_decision: JSON dict from Cognitive Gateway
-
-        Returns:
-            List of chat messages for the LLM API
+        Build the full message history for the Personality Core.
+        Includes system prompt (with emotion/topic/LTM context), recent STM,
+        and the new user input (as text or multimodal if image_b64 is provided).
         """
-        # Extract cognitive metadata
         emotion = cognitive_decision.get("emotion", "neutral")
         topic = cognitive_decision.get("topic", "general")
-        memory_queries = cognitive_decision.get("memory_queries", [])
+        queries = cognitive_decision.get("memory_queries", [])
 
-        # Retrieve relevant LTM memories
+        # Fetch LTM memories if relevant
         ltm_entries = []
-        if memory_queries:
-            ltm_entries = await self.ltm.retrieve(
-                queries=memory_queries,
-                top_k=self.max_ltm_in_prompt,
-            )
+        if queries:
+            ltm_entries = await self.ltm.retrieve(queries=queries, top_k=self.max_ltm_in_prompt)
 
         # Check if the most recent STM entry was an interrupt
         recent_entries = await self.stm.get_recent(1)
@@ -93,7 +85,7 @@ class ContextManager:
         )
 
         # Build message list
-        messages: list[dict[str, str]] = [
+        messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_content},
         ]
 
@@ -102,12 +94,21 @@ class ContextManager:
         messages.extend(recent)
 
         # Add current user message
-        messages.append({"role": "user", "content": user_input})
+        if image_b64:
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_input},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
+                ]
+            })
+        else:
+            messages.append({"role": "user", "content": user_input})
 
         log.debug(
             f"[Context] Built prompt: {len(messages)} messages, "
             f"emotion={emotion}, topic={topic}, "
-            f"ltm_hits={len(ltm_entries)}"
+            f"ltm_hits={len(ltm_entries)}, has_image={bool(image_b64)}"
         )
         return messages
 

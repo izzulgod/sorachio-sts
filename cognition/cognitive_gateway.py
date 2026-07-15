@@ -35,7 +35,6 @@ DEFAULT_DECISION: dict[str, Any] = {
     "interrupt": False,
     "priority": "medium",
     "speech_type": "direct_address",
-    "confidence": 0.5,
     "store_memory": False,
     "emotion": "neutral",
     "topic": "general",
@@ -63,45 +62,36 @@ Do NOT:
 - add extra text
 
 Required JSON schema:
-{"respond": boolean, "interrupt": boolean, "priority": string, "speech_type": string,
- "social_attention": float, "addressed_to_ai": boolean, "store_memory": boolean,
- "importance": float, "emotion": string, "topic": string, "memory_queries": list,
- "confidence": float}
+{"respond": boolean, "topic": string, "emotion": string, "store_memory": boolean, "importance": float, "memory_queries": list}
 
 Rules:
-- speech_type must be one of: direct_address, background, filler, ambient, conversation
-- priority must be one of: low, medium, high
-- social_attention must be 0.0-1.0 (how much attention the user is paying to you)
-- respond=false for background speech, TV/music, filler words (um, uh), or noise
-- respond=true for greetings, questions, commands, or intentional interaction
-- interrupt=true ONLY if the user is urgently telling you to stop or changing the subject forcefully
-- addressed_to_ai=true if user directly speaks to Sorachio
-- store_memory=true for personal facts, goals, preferences, or important events
-- importance must be 0.0-1.0
-- confidence must be 0.0-1.0
-- memory_queries maximum length is 3
-- topic should be a short label
+- respond=false for background noise, other people talking, filler words (um, wait), or if the user is not talking to you.
+- respond=true for greetings, questions, commands, or direct speech to you.
+- topic: a short label describing the subject (e.g. greeting, focus, origin, general, etc.). If the user asks you to look, see, watch, or analyze something visual, set topic to 'visual_analysis'.
 - emotion must be one of: neutral, happy, sad, anxious, frustrated, excited, confused, tired
+- store_memory=true for personal facts, preferences, goals, or important user events.
+- importance: 0.0 to 1.0 (how important the information is).
+- memory_queries: list of search keywords (max 2) if relevant to search long-term memory.
 
 Example Input: "Hey, I've been really stressed about my exams this week."
 Example Output:
-{"respond": true, "interrupt": false, "priority": "high", "speech_type": "direct_address",
- "social_attention": 0.9, "addressed_to_ai": true, "store_memory": true, "importance": 0.8,
- "emotion": "anxious", "topic": "exams", "memory_queries": ["exams", "stress"],
- "confidence": 0.9}
+{"respond": true, "topic": "exams", "emotion": "anxious", "store_memory": true, "importance": 0.8, "memory_queries": ["exams", "stress"]}
 
 More Examples:
 Input: "Hey Mom! Can you turn off that TV please?"
-Output: {"respond":false,"interrupt":false,"priority":"low","speech_type":"background","social_attention":0.1,"addressed_to_ai":false,"store_memory":false,"importance":0.1,"emotion":"neutral","topic":"social_interaction","memory_queries":[],"confidence":0.98}
+Output: {"respond": false, "topic": "social_interaction", "emotion": "neutral", "store_memory": false, "importance": 0.1, "memory_queries": []}
 
 Input: "Stop talking, I need to focus."
-Output: {"respond":true,"interrupt":true,"priority":"high","speech_type":"direct_address","social_attention":1.0,"addressed_to_ai":true,"store_memory":false,"importance":0.5,"emotion":"frustrated","topic":"focus","memory_queries":[],"confidence":0.99}
+Output: {"respond": true, "topic": "focus", "emotion": "frustrated", "store_memory": false, "importance": 0.5, "memory_queries": []}
+
+Input: "Look at the camera, what am I holding?"
+Output: {"respond": true, "topic": "visual_analysis", "emotion": "confused", "store_memory": false, "importance": 0.6, "memory_queries": []}
 
 Input: "Who made you?"
-Output: {"respond":true,"interrupt":false,"priority":"medium","speech_type":"direct_address","social_attention":1.0,"addressed_to_ai":true,"store_memory":false,"importance":0.2,"emotion":"curious","topic":"origin","memory_queries":[],"confidence":0.95}
+Output: {"respond": true, "topic": "origin", "emotion": "curious", "store_memory": false, "importance": 0.2, "memory_queries": []}
 
 Input: "Umm... wait..."
-Output: {"respond":false,"interrupt":false,"priority":"low","speech_type":"filler","social_attention":0.8,"addressed_to_ai":true,"store_memory":false,"importance":0.1,"emotion":"neutral","topic":"general","memory_queries":[],"confidence":0.9}
+Output: {"respond": false, "topic": "general", "emotion": "neutral", "store_memory": false, "importance": 0.1, "memory_queries": []}
 
 Analyze the user's input and fill the JSON with appropriate values. Output ONLY valid JSON.
 """
@@ -144,7 +134,6 @@ class CognitiveGateway:
             return {
                 **DEFAULT_DECISION,
                 "respond": False,
-                "confidence": 0.0,
             }
 
         # -------------------------------------------------------------------
@@ -181,6 +170,7 @@ class CognitiveGateway:
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                extra_params={"response_format": {"type": "json_object"}},
             )
 
             if not isinstance(raw, str):
@@ -362,7 +352,6 @@ class CognitiveGateway:
 
         for key in (
             "importance",
-            "confidence",
             "social_attention",
         ):
 

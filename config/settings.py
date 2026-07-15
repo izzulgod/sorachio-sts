@@ -177,12 +177,19 @@ class SystemConfig(BaseModel):
     data_dir: str = "data"
 
 
+class VisionConfig(BaseModel):
+    enabled: bool = True
+    device_index: int = 0
+    max_size: int = 512
+
+
 # ---------------------------------------------------------------------------
 # Root Settings
 # ---------------------------------------------------------------------------
 
 class SorachioSettings(BaseModel):
     system: SystemConfig = Field(default_factory=SystemConfig)
+    vision: VisionConfig = Field(default_factory=VisionConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     stt: STTConfig = Field(default_factory=STTConfig)
     llm: LLMConfig

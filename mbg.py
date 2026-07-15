@@ -274,7 +274,7 @@ class MasterBootstrapGuardian:
         """Quick check: can we import critical packages and find system libs?"""
         critical_packages = [
             "httpx", "aiohttp", "pydantic", "sounddevice",
-            "numpy", "rich", "typer", "kokoro",
+            "numpy", "rich", "typer", "kokoro", "cv2", "PIL",
         ]
         for pkg in critical_packages:
             try:
@@ -516,6 +516,8 @@ class MasterBootstrapGuardian:
             "structlog",
             "kokoro>=0.9.2",
             "misaki[en]",
+            "opencv-python",
+            "Pillow",
         ]
 
         # VAD package (try binary wheel first)
