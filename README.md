@@ -10,7 +10,7 @@
 Here is a preview of how the interactive CLI behaves in different operational modes, showcasing the real-time **Cognitive Gateway** status bar and state transitions.
 
 #### 1. Full Voice/Run Mode (`python main.py run`)
-In voice mode, the pipeline continuously monitors microphone input using VAD. Once speech is detected and transcribed, the Cognitive Gateway immediately computes the emotional state, topic, and response confidence, seamlessly transitioning into the streaming audio playback phase. Filler or hesitant speech (e.g., "Um...") is filtered out and marked as `X ignore`, preventing unnecessary processing on non-substantive input.
+In voice mode, the pipeline continuously monitors microphone input using VAD. Once speech is detected and transcribed, the Cognitive Gateway immediately computes the emotional state and topic, seamlessly transitioning into the streaming audio playback phase. Filler or hesitant speech (e.g., "Um...") is filtered out and marked as `X ignore`, preventing unnecessary processing on non-substantive input.
 
 ![Sorachio-STS Voice Mode](docs/ss-run.png)
 
@@ -198,12 +198,12 @@ Python Orchestrator (asyncio event loop)
 │  │  llama-server --model X                      │    │
 │  │    --mmproj Y (if vision)                    │    │
 │  │    --ctx-size 0 (auto from GGUF metadata)    │    │
-│  │    --jinja (auto chat template from GGUF)    │    │
+│  │    --cache-ram 0 (disables prompt cache)     │    │
 │  │    --reasoning off/auto                      │    │
 │  └──────────────────────────────────────────────┘    │
 │                                                      │
 │  ✅ No YAML editing needed!                          │
-│  ✅ Chat template auto-loaded from model             │
+│  ✅ Native C++ template handler (vision-ready)       │
 │  ✅ Context size auto-detected                       │
 │  ✅ Vision auto-enabled if mmproj present             │
 └──────────────────────────────────────────────────────┘
@@ -261,7 +261,7 @@ Python Orchestrator (asyncio event loop)
     |
     |  POST /v1/chat/completions (stream=true)
     |  to llama-server:8002 (LLM #2, auto-detected)
-    |  --jinja (chat template from GGUF)
+    |  --cache-ram 0 (disables prompt cache)
     |  --mmproj (vision projector, if present)
     |
     v token stream: "Hello " "there! " "I " "can " "hear " ...
@@ -301,6 +301,11 @@ Sorachio-STS/
 +-- audio/                  # Audio I/O
 |   +-- capture.py          # Mic capture + VAD
 |   +-- playback.py         # Interruptible playback queue
+|   +-- acoustic_gate.py    # Pre-VAD energy filter and silence sentinel injection
+|   +-- echo_cancellation.py # Acoustic Echo Cancellation (AEC)
+|
++-- vision/                 # Multimodal Vision I/O
+|   +-- capture.py          # Webcam single-snapshot capture (OpenCV)
 |
 +-- stt/                    # Speech-to-Text
 |   +-- whisper_client.py   # whisper.cpp subprocess client
@@ -682,6 +687,7 @@ llm:
     model_dir: "models/llm1"     # Scanner picks largest .gguf here
     # model_path: ""             # Leave empty for auto-detect, or set explicit path
     n_ctx: 0                     # 0 = auto from model metadata
+    n_threads: 8                 # 8 threads is optimal for small 0.8B models
     reasoning: "off"             # Disable thinking for fast JSON routing
 
   personality_core:
@@ -689,6 +695,7 @@ llm:
     # model_path: ""             # Leave empty for auto-detect
     # mmproj_path: ""            # Auto-detected if mmproj*.gguf present
     n_ctx: 0                     # 0 = auto from model metadata
+    n_threads: 12                # 12 threads is optimal for 8-core CPUs
     reasoning: "off"             # Disable thinking for direct conversation
 ```
 
@@ -729,13 +736,11 @@ The Cognitive Gateway handles all of this in <500ms.
 ```json
 {
     "respond": true,
-    "addressed_to_ai": true,
-    "store_memory": true,
-    "importance": 0.91,
+    "topic": "exams",
     "emotion": "anxious",
-    "topic": "education",
-    "memory_queries": ["exam", "stress", "study"],
-    "confidence": 0.88
+    "store_memory": true,
+    "importance": 0.8,
+    "memory_queries": ["exams", "stress"]
 }
 ```
 
@@ -744,16 +749,14 @@ The Cognitive Gateway handles all of this in <500ms.
 In both text and run modes, the Cognitive Gateway's decision is visually rendered in real-time as a rich UI pill bar before the response generation begins:
 
 ```text
-  >>> STATUS   happy    respond    memory    topic: general    conf 75%
+  >>> STATUS   happy    respond    memory    topic: general
 ```
 
-This UI provides immediate feedback on the AI's internal state (emotion, decision to respond, memory storage, topic, and confidence level) while the system transitions smoothly using transient loading spinners.
+This UI provides immediate feedback on the AI's internal state (emotion, decision to respond, memory storage, and topic) while the system transitions smoothly using transient loading spinners.
 
-### Thinking Mode Control
+### Thinking Mode & JSON Mode Control
 
-The Cognitive Gateway uses `--reasoning off` at the server level to disable any thinking/reasoning tokens. This is **model-agnostic** — it works with Qwen, Gemma, Llama, or any other model that has a thinking mode. This approach replaces the previous model-specific `/no_think` directive, making the system flexible when swapping models.
-
-This reduces latency from ~3s to ~0.3s for the cognitive decision.
+The Cognitive Gateway uses `--reasoning off` at the server level to disable any thinking/reasoning tokens. Additionally, it forces native JSON output using the OpenAI-compatible `response_format={"type": "json_object"}` option. This forces `llama-server` to use grammar-based decoding constraints, preventing the router model from generating conversational filler or trailing explanation text. This approach reduces latency from ~3s to ~0.1-0.2s for the cognitive decision.
 
 ---
 
