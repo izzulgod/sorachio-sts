@@ -29,12 +29,12 @@ class Bootstrapper:
         self.bin_dir = self.root / "bin"
         self.repos_dir = self.root / ".repos"
         self.models_dir = self.root / "models"
-        self.stt_models_dir = self.models_dir / "stt"
+        self.tts_models_dir = self.models_dir / "tts"
         self.venv_dir = self.root / "venv_runtime"
 
     def _check_python_version(self) -> None:
         """Check if the current Python version is within the required range."""
-        # Required range: 3.10 <= version < 3.13 (due to kokoro dependency)
+        # Required range: 3.10 <= version < 3.13
         major, minor, micro = sys.version_info.major, sys.version_info.minor, sys.version_info.micro
 
         if major == 3 and 10 <= minor < 13:
@@ -211,6 +211,9 @@ class Bootstrapper:
             "structlog",
             "pytest>=8.0.0",
             "pytest-asyncio>=0.23.0",
+            "faster-whisper",
+            "piper-tts",
+            "langdetect",
         ]
 
         log.info(f"Installing core packages: {', '.join(core_deps)}")
@@ -289,12 +292,12 @@ class Bootstrapper:
             return False
 
     def _build_external_tools(self) -> None:
-        """Build and install external C++ tools (llama.cpp, whisper.cpp)."""
+        """Build and install external C++ tools (llama.cpp)."""
         log.info("Building external tools...")
 
         self.bin_dir.mkdir(parents=True, exist_ok=True)
         self.repos_dir.mkdir(parents=True, exist_ok=True)
-        self.stt_models_dir.mkdir(parents=True, exist_ok=True)
+        self.tts_models_dir.mkdir(parents=True, exist_ok=True)
 
         # Check and auto-install build tools
         for tool in ["cmake", "git"]:
@@ -342,54 +345,6 @@ class Bootstrapper:
         else:
             log.info("llama-server is valid, skipping build.")
 
-        # --- whisper.cpp ---
-        whisper_repo = self.repos_dir / "whisper.cpp"
-        whisper_bin = self.bin_dir / "whisper-cli"
-        if not self._is_binary_valid(whisper_bin, ["--help"]):
-            log.info("Building whisper.cpp...")
-            if not whisper_repo.exists():
-                self._run_command(["git", "clone", "https://github.com/ggerganov/whisper.cpp", str(whisper_repo)])
-            else:
-                self._run_command(["git", "-C", str(whisper_repo), "pull"])
-
-            build_dir = whisper_repo / "build"
-            self._run_command(["cmake", "-B", str(build_dir)], cwd=whisper_repo)
-
-            # Use all detected CPU threads for building
-            threads = os.cpu_count() or 1
-            log.info(f"Compiling whisper-cli using {threads} threads...")
-            self._run_command(
-                [
-                    "cmake",
-                    "--build",
-                    str(build_dir),
-                    "--config",
-                    "Release",
-                    "-j",
-                    str(threads),
-                ],
-                cwd=whisper_repo,
-                verbose=True
-            )
-
-            # Copy binary
-            src_bin = build_dir / "bin" / "main"
-            if src_bin.exists():
-                shutil.copy(src_bin, whisper_bin)
-            else:
-                log.warning("Could not find whisper-cli binary after build.")
-        else:
-            log.info("whisper-cli is valid, skipping build.")
-
-        # --- Whisper Model ---
-        model_path = self.stt_models_dir / "ggml-base.en.bin"
-        if not model_path.exists():
-            log.info("Downloading Whisper model...")
-            url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
-            urllib.request.urlretrieve(url, model_path)
-        else:
-            log.info("Whisper model already exists, skipping download.")
-
         # --- LLM Models (user-managed, auto-detected) ---
         llm1_dir = self.models_dir / "llm1"
         llm2_dir = self.models_dir / "llm2"
@@ -411,23 +366,15 @@ class Bootstrapper:
                     f"  Download a GGUF model and place it in {model_dir}/"
                 )
 
-        # --- Kokoro TTS ---
-        log.info("Installing Kokoro TTS dependencies (optional)...")
-        try:
-            # Install torch/torchaudio for CPU
-            self._run_command([
-                sys.executable, "-m", "pip", "install",
-                "torch", "torchaudio",
-                "--index-url", "https://download.pytorch.org/whl/cpu"
-            ])
-            self._run_command([
-                sys.executable, "-m", "pip", "install",
-                "kokoro>=0.9.2", "onnxruntime", "phonemizer", "misaki"
-            ])
-            log.info("Kokoro TTS installed successfully.")
-        except Exception as e:
-            log.warning(f"Kokoro TTS installation failed: {e}")
-            log.warning("The system will run without TTS — responses will print to console.")
+        # --- STT (faster-whisper) ---
+        # faster-whisper auto-downloads CTranslate2 models from Hugging Face.
+        # No build step needed.
+        log.info("STT: faster-whisper models are auto-downloaded on first use.")
+
+        # --- TTS (Piper) ---
+        # Piper ONNX models are auto-downloaded on first use by PiperTTSClient.
+        log.info("TTS: Piper voice models are auto-downloaded on first use.")
+        log.info(f"  Model directory: {self.tts_models_dir}")
 
     def _run_self_checks(self) -> None:
         """Run linting and static analysis checks."""

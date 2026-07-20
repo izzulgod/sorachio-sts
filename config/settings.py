@@ -57,23 +57,14 @@ class AudioConfig(BaseModel):
 
 
 class STTConfig(BaseModel):
-    binary_path: str = "bin/whisper-cli.exe" if os.name == "nt" else "bin/whisper-cli"
-    model_path: str = "models/stt/ggml-base.en.bin"
-    language: str = "en"
+    model_size: str = "base"
+    language: str = "auto"             # "auto" = detect id/en, or pin to "en"/"id"
     threads: int = 4
     beam_size: int = 5
-    no_timestamps: bool = True
-    word_timestamps: bool = False
     temperature: float = 0.0
-    timeout_s: float = 10.0
-
-    @field_validator("binary_path", mode="after")
-    @classmethod
-    def _ensure_exe_stt(cls, v: str) -> str:
-        """Auto-append .exe on Windows regardless of what YAML says."""
-        if os.name == "nt" and not v.endswith(".exe"):
-            return v + ".exe"
-        return v
+    timeout_s: float = 15.0
+    device: str = "cpu"               # "cpu" or "cuda"
+    compute_type: str = "int8"        # "int8", "float16", "float32"
 
 
 class LLMInstanceConfig(BaseModel):
@@ -111,11 +102,11 @@ class LLMConfig(BaseModel):
 
 
 class TTSConfig(BaseModel):
-    voice: str = "af_heart"
+    voice: str = "en_US-lessac-medium"   # Piper voice ID
     speed: float = 1.0
-    sample_rate: int = 24000
-    lang: str = "en-us"
-    split_pattern: str | None = None
+    sample_rate: int = 22050             # Piper native output rate
+    lang: str = "auto"                   # "auto" = route by STT language, or pin to "en"/"id"
+    models_dir: str = "models/tts"       # Directory for Piper ONNX models
 
 
 class STMConfig(BaseModel):

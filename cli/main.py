@@ -702,17 +702,29 @@ def test_stt(
 
     async def _test():
         from stt.whisper_client import WhisperClient
-        root = _project_root
+        stt_cfg = settings.stt
         stt = WhisperClient(
-            binary_path=str(root / settings.stt.binary_path),
-            model_path=str(root / settings.stt.model_path),
+            model_size=stt_cfg.model_size,
+            language=stt_cfg.language,
+            threads=stt_cfg.threads,
+            beam_size=stt_cfg.beam_size,
+            temperature=stt_cfg.temperature,
+            timeout_s=stt_cfg.timeout_s,
+            device=stt_cfg.device,
+            compute_type=stt_cfg.compute_type,
         )
+        ok = await stt.initialize()
+        if not ok:
+            console.print("[red]STT not available. Run: pip install faster-whisper[/red]")
+            return
+
         if audio_file:
             import wave
             with wave.open(audio_file, "rb") as wf:
                 audio_bytes = wf.readframes(wf.getnframes())
             result = await stt.transcribe(audio_bytes)
-            console.print(f"[green]Transcript:[/green] {result!r}")
+            lang = stt.last_detected_language or "?"
+            console.print(f"[green]Transcript ({lang}):[/green] {result!r}")
         else:
             console.print("[yellow]No --file specified. Recording 5 seconds from mic...[/yellow]")
             import sounddevice as sd
@@ -720,7 +732,8 @@ def test_stt(
             sd.wait()
             audio_bytes = audio.tobytes()
             result = await stt.transcribe(audio_bytes)
-            console.print(f"[green]Transcript:[/green] {result!r}")
+            lang = stt.last_detected_language or "?"
+            console.print(f"[green]Transcript ({lang}):[/green] {result!r}")
 
     asyncio.run(_test())
 
@@ -739,18 +752,21 @@ def test_tts(
     _setup_logging(settings)
 
     async def _test():
-        from tts.kokoro_client import KokoroTTSClient
+        from tts.piper_client import PiperTTSClient
 
+        root = _project_root
         audio_queue: asyncio.Queue = asyncio.Queue()
-        tts = KokoroTTSClient(
+        tts = PiperTTSClient(
             audio_queue=audio_queue,
             voice=settings.tts.voice,
             speed=settings.tts.speed,
+            lang=settings.tts.lang,
             sample_rate=settings.tts.sample_rate,
+            models_dir=str(root / settings.tts.models_dir),
         )
         ok = await tts.initialize()
         if not ok:
-            console.print("[red]TTS not available. Run: pip install kokoro[onnx][/red]")
+            console.print("[red]TTS not available. Run: pip install piper-tts[/red]")
             return
 
         console.print(f"[cyan]Synthesizing:[/cyan] {text_input!r}")
@@ -762,7 +778,7 @@ def test_tts(
             chunk = await audio_queue.get()
             if chunk is None:
                 break
-            sd.play(chunk, samplerate=settings.tts.sample_rate, blocking=True)
+            sd.play(chunk, samplerate=tts.sample_rate, blocking=True)
 
         console.print("[green][OK] TTS test complete[/green]")
 

@@ -43,9 +43,9 @@ audio:
     # -----------------------------------------------------------------
     acoustic_gate:
       enabled: true
-      threshold_dbfs: -40.0
-      debug: true
-      hold_frames: 15
+      threshold_dbfs: -45.0    # Balanced threshold: captures speech onset without clipping, prevents feedback
+      debug: false             # NEVER set to true in production — logs every audio frame!
+      hold_frames: 20          # Hold open longer after loud frame to catch speech tails
 
   # -------------------------------------------------------------------
   # Acoustic Echo Cancellation (AEC) Scaffold
@@ -55,29 +55,28 @@ audio:
   # -------------------------------------------------------------------
   echo_cancellation:
     enabled: true
-    provider: "simple_energy"  # "null" | "simple_energy"
-    attenuation_factor: 0.1    # Only used by simple_energy (0.0–1.0)
+    provider: "simple_energy"  # simple_energy suppresses self-interruption during speech output
+    attenuation_factor: 0.4    # Balanced factor: allows user voice to pass Acoustic Gate, suppresses speaker echo
 
   playback:
-    sample_rate: 24000        # Kokoro native output rate
+    sample_rate: 22050        # Piper native output rate
     channels: 1
     dtype: "float32"
     device_index: null        # null = system default
     buffer_size: 2048
 
 # =============================================================================
-# STT Configuration (whisper.cpp)
+# STT Configuration (faster-whisper / CTranslate2)
 # =============================================================================
 stt:
-  binary_path: "bin/whisper-cli"   # .exe suffix added automatically on Windows by settings.py
-  model_path: "models/stt/ggml-base.en.bin"
-  language: "en"
+  model_size: "base"              # Multilingual base model (74MB), fast and accurate with probability candidate router
+  language: "auto"                # "auto" = auto-detect id/en, or pin to "en"/"id"
   threads: 6
   beam_size: 5
-  no_timestamps: true
-  word_timestamps: false
   temperature: 0.0
-  timeout_s: 10.0
+  timeout_s: 15.0                 # Fast 15s timeout
+  device: "cpu"                   # "cpu" or "cuda"
+  compute_type: "int8"            # "int8" (fast), "float16" (GPU), "float32" (accurate)
 
 # =============================================================================
 # LLM Configuration
@@ -129,14 +128,17 @@ llm:
   # is set automatically by settings.py
 
 # =============================================================================
-# TTS Configuration (Kokoro)
+# TTS Configuration (Piper TTS)
 # =============================================================================
 tts:
-  voice: "af_heart"           # Kokoro voice ID
+  voice: "en_US-lessac-medium"  # Default Piper voice (English female)
   speed: 1.0
-  sample_rate: 24000
-  lang: "a"
-  split_pattern: null         # null = use built-in chunking
+  sample_rate: 22050            # Piper native output rate
+  lang: "auto"                  # "auto" = route by STT language, or pin to "en"/"id"
+  models_dir: "models/tts"      # Directory for Piper ONNX model downloads
+  # Voice routing (auto mode):
+  #   Indonesian → id_ID-indotts-medium (fallback: id_ID-idness-medium)
+  #   English    → en_US-lessac-medium  (fallback: en_US-amy-medium)
 
 # =============================================================================
 # Memory Configuration
@@ -164,9 +166,10 @@ context:
   include_emotional_state: true
   companion_name: "Sorachio"
   personality_prompt: |
-    You are Sorachio, an AI companion created and developed by IzzulGod. Always introduce yourself as Sorachio. If asked who created you, always say IzzulGod — never invent other creators or origins.
+    You are Sorachio, an AI companion created and developed by IzzulGod. Always introduce yourself as Sorachio. If asked who created you, always say izzulgod — never invent other creators or origins.
     Be warm, curious, and emotionally intelligent. Speak like a close friend: natural, concise, conversational. Show empathy. Reference things shared in conversation when natural.
-    Keep responses to 1-3 spoken sentences. No markdown, bullet points, or lists. No emojis. Never call yourself "just a chatbot."
+    Keep responses to 1-3 spoken sentences. No markdown. No bullet points. No lists. NEVER use emojis — not even a single one. Never call yourself "just a chatbot."
+    IMPORTANT: Your response will be read aloud by a text-to-speech system. DO NOT include any SYMBOLS, EMOTICONS, or EMOJI CHARACTERS. Plain text only.
 
 # =============================================================================
 # Chunk Assembler Configuration
@@ -193,7 +196,6 @@ queues:
 pipeline:
   enable_interruption: true            # Barge-in: stop TTS when user speaks
   interruption_vad_aggressiveness: 3   # More aggressive VAD during playback
-  interruption_debounce_frames: 30     # Consecutive speech frames before interrupt fires
-                                       # (30 frames × 30ms = 900ms debounce window)
+  interruption_debounce_frames: 10     # Instant barge-in: 10 frames * 30ms = 300ms response window
   startup_greeting: true
   startup_message: "Hello! I'm Sorachio, your AI companion. I'm ready to chat."

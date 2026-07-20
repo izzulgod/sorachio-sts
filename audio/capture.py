@@ -141,6 +141,41 @@ class AudioCapture:
         except (sd.PortAudioError, OSError, Exception):
             return False
 
+    def _calibrate_acoustic_gate(self) -> None:
+        """Measure background noise floor for 0.8 seconds and calibrate Acoustic Gate threshold."""
+        if not hasattr(self, "_acoustic_gate") or not self._acoustic_gate.enabled:
+            return
+
+        try:
+            log.info("[Capture] Calibrating Acoustic Gate noise floor... Please remain silent.")
+            duration_s = 0.8
+            num_samples = int(self.sample_rate * duration_s)
+            
+            # Record a short snippet of background noise
+            noise_data = sd.rec(
+                num_samples,
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype="int16",
+                device=self.device_index,
+            )
+            sd.wait()
+            
+            # Calculate average dBFS of the noise snippet
+            from audio.acoustic_gate import compute_dbfs
+            dbfs = compute_dbfs(noise_data.tobytes())
+            
+            # Set threshold to 6.0 dB above the background noise floor, clamped to safe ranges
+            calibrated_threshold = max(-50.0, min(-20.0, dbfs + 6.0))
+            
+            self._acoustic_gate.threshold_dbfs = calibrated_threshold
+            log.info(
+                f"[Capture] Calibration complete: Background Noise={dbfs:.1f} dBFS | "
+                f"Acoustic Gate threshold set to {calibrated_threshold:.1f} dBFS"
+            )
+        except Exception as e:
+            log.warning(f"[Capture] Auto-calibration failed, using default: {e}")
+
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start capture in background threads."""
         if not self._audio_available:
@@ -150,6 +185,9 @@ class AudioCapture:
 
         self._loop = loop
         self._running = True
+
+        # Run auto-calibration for noise floor
+        self._calibrate_acoustic_gate()
 
         # VAD worker thread
         self._vad_thread = threading.Thread(
@@ -169,7 +207,8 @@ class AudioCapture:
         self._stream.start()
         log.info(
             f"[Capture] Started — device={self.device_index or 'default'} "
-            f"rate={self.sample_rate}Hz VAD={self.vad_aggressiveness}"
+            f"rate={self.sample_rate}Hz VAD={self.vad_aggressiveness} "
+            f"GateThreshold={self._acoustic_gate.threshold_dbfs:.1f}dBFS"
         )
 
     def stop(self) -> None:
@@ -242,10 +281,15 @@ class AudioCapture:
         speech_frames: list[bytes] = []
         triggered = False
         silent_frames = 0
+        active_speech_frames = 0
         interrupt_speech_frames = 0
         max_silent_frames = self.silence_timeout_ms // self.chunk_ms
         min_speech_frames = self.min_speech_duration_ms // self.chunk_ms
         max_frames = int(self.max_speech_duration_s * 1000 / self.chunk_ms)
+
+        # Minimum active speech frames (non-silence) to consider it a real speech turn.
+        # 6 frames * 30ms = 180ms of actual voice. Prevents pops/clicks from triggering.
+        min_active_speech_frames = 6
 
         while self._running:
             try:
@@ -273,6 +317,7 @@ class AudioCapture:
             if is_speech:
                 if not triggered:
                     triggered = True
+                    active_speech_frames = 0
                     _log_event("VAD state: Speech started", force=True)
                     log.debug("[VAD] Speech detected")
                     if self._loop:
@@ -294,21 +339,27 @@ class AudioCapture:
                             asyncio.run_coroutine_threadsafe(
                                 self._do_interrupt(), self._loop
                             )
+                        # Synchronously unmute from this thread so that _flush_speech
+                        # will NOT discard the barge-in speech due to async timing.
+                        # threading.Event.clear() is thread-safe.
+                        self._muted.clear()
                         # Reset to prevent continuous firing
                         interrupt_speech_frames = 0
 
                 speech_frames.append(pcm)
                 silent_frames = 0
+                active_speech_frames += 1
                 if DEBUG_VERBOSE:
-                    _log_event(f"speech_frames={len(speech_frames)}, silent_frames={silent_frames}")
+                    _log_event(f"speech_frames={len(speech_frames)}, silent_frames={silent_frames}, active={active_speech_frames}")
 
                 # Max duration exceeded — flush now
                 if len(speech_frames) >= max_frames:
                     _log_event("VAD: Max duration exceeded, flushing now", force=True)
-                    self._flush_speech(speech_frames, min_speech_frames)
+                    self._flush_speech(speech_frames, active_speech_frames, min_active_speech_frames)
                     speech_frames = []
                     triggered = False
                     silent_frames = 0
+                    active_speech_frames = 0
 
             else:
                 interrupt_speech_frames = 0
@@ -320,15 +371,16 @@ class AudioCapture:
                         # Append digital silence to preserve timing for STT
                         speech_frames.append(b'\x00' * (self._frame_size * 2))
                     if DEBUG_VERBOSE:
-                        _log_event(f"speech_frames={len(speech_frames)}, silent_frames={silent_frames}")
+                        _log_event(f"speech_frames={len(speech_frames)}, silent_frames={silent_frames}, active={active_speech_frames}")
 
                     if silent_frames >= max_silent_frames:
                         _log_event(f"VAD state: Speech ended. STT Flush triggered (silent_frames={silent_frames})", force=True)
                         # End of utterance
-                        self._flush_speech(speech_frames, min_speech_frames)
+                        self._flush_speech(speech_frames, active_speech_frames, min_active_speech_frames)
                         speech_frames = []
                         triggered = False
                         silent_frames = 0
+                        active_speech_frames = 0
 
     async def _do_interrupt(self) -> None:
         """Signal interruption (coroutine, runs in event loop)."""
@@ -337,13 +389,18 @@ class AudioCapture:
         if self.interrupt_callback:
             await self.interrupt_callback()
 
-    def _flush_speech(self, frames: list[bytes], min_frames: int) -> None:
+    def _flush_speech(self, frames: list[bytes], active_speech_frames: int, min_active_speech_frames: int) -> None:
         """Send accumulated speech frames to STT queue."""
         if DEBUG_VERBOSE:
-            _log_event(f"_flush_speech: total frames={len(frames)}, min_required={min_frames}")
-        if len(frames) < min_frames:
-            _log_event(f"_flush_speech discarded: too short ({len(frames)} frames < {min_frames})", force=True)
-            log.debug(f"[VAD] Too short ({len(frames)} frames) — discarding")
+            _log_event(f"_flush_speech: total frames={len(frames)}, active speech frames={active_speech_frames}, min_required_active={min_active_speech_frames}")
+        
+        # Guard: Discard clicks, pops, static spikes that lack vocal duration
+        if active_speech_frames < min_active_speech_frames:
+            _log_event(
+                f"_flush_speech discarded: too few active speech frames ({active_speech_frames} < {min_active_speech_frames})",
+                force=True
+            )
+            log.debug(f"[VAD] Too few active frames ({active_speech_frames}) — discarding noise/pop")
             return
 
         audio_bytes = b"".join(frames)

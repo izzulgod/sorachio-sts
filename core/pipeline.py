@@ -104,14 +104,18 @@ class SorachioPipeline:
         from stt.whisper_client import WhisperClient
         stt_cfg = cfg.stt
         self._stt = WhisperClient(
-            binary_path=str(root / stt_cfg.binary_path),
-            model_path=str(root / stt_cfg.model_path),
+            model_size=stt_cfg.model_size,
             language=stt_cfg.language,
             threads=stt_cfg.threads,
             beam_size=stt_cfg.beam_size,
             temperature=stt_cfg.temperature,
             timeout_s=stt_cfg.timeout_s,
+            device=stt_cfg.device,
+            compute_type=stt_cfg.compute_type,
         )
+        stt_ok = await self._stt.initialize()
+        if not stt_ok:
+            log.warning("[Pipeline] STT unavailable — speech input disabled")
 
         # ---- Cognitive Gateway ----
         from cognition.cognitive_gateway import CognitiveGateway
@@ -163,14 +167,15 @@ class SorachioPipeline:
         )
 
         # ---- TTS ----
-        from tts.kokoro_client import KokoroTTSClient
+        from tts.piper_client import PiperTTSClient
         tts_cfg = cfg.tts
-        self._tts = KokoroTTSClient(
+        self._tts = PiperTTSClient(
             audio_queue=self._audio_queue,
             voice=tts_cfg.voice,
             speed=tts_cfg.speed,
             lang=tts_cfg.lang,
             sample_rate=tts_cfg.sample_rate,
+            models_dir=str(root / tts_cfg.models_dir),
         )
         tts_ok = await self._tts.initialize()
         if not tts_ok:
@@ -263,7 +268,31 @@ class SorachioPipeline:
             log.info(f"[Pipeline] Greeting: {msg!r}")
             # Mute during greeting playback to avoid capturing TTS output
             self._capture.mute()
-            await self._tts.speak(msg)
+            
+            # Temporarily disable interruption callback so the greeting does not interrupt itself
+            old_interrupt_callback = self._capture.interrupt_callback
+            self._capture.interrupt_callback = None
+            
+            greeting_done = asyncio.Event()
+            
+            async def _on_greeting_done(event_data) -> None:
+                greeting_done.set()
+                
+            self.bus.subscribe(EventType.PLAYBACK_FINISHED, _on_greeting_done)
+            
+            try:
+                await self._tts.speak(msg)
+                # Wait for the greeting playback to actually finish completely
+                try:
+                    await asyncio.wait_for(greeting_done.wait(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    log.warning("[Pipeline] Startup greeting playback timeout")
+            finally:
+                self.bus.unsubscribe(EventType.PLAYBACK_FINISHED, _on_greeting_done)
+                # Restore the interruption callback for regular turns
+                self._capture.interrupt_callback = old_interrupt_callback
+                # Ensure mic is unmuted for normal user input after greeting finishes
+                self._capture.unmute()
 
         log.info("[Pipeline] Running — speak into your microphone")
         log.info("[Pipeline] Press Ctrl+C to stop")
@@ -292,6 +321,11 @@ class SorachioPipeline:
             self._stt_queue.task_done()
 
             if transcript:
+                # Propagate detected language to TTS for voice routing
+                detected_lang = self._stt.last_detected_language
+                if detected_lang and hasattr(self._tts, 'set_language'):
+                    self._tts.set_language(detected_lang)
+
                 await self.bus.emit(
                     EventType.STT_RESULT, data=transcript, source="stt"
                 )
@@ -403,14 +437,13 @@ class SorachioPipeline:
         self._interrupt_event.set()
         self._playback.interrupt()
         
+        # Unmute the mic immediately so the barge-in speech can be captured
+        if self._capture:
+            self._capture.unmute()
+        
         # Inject interruption metadata into STM
         if self._stm:
-            from datetime import datetime
-            await self._stm.add(
-                role="system",
-                content="[Interrupted by user]",
-                metadata={"interrupted": True, "interrupted_at": datetime.now().isoformat()}
-            )
+            await self._stm.mark_last_interrupted()
 
         # Clear TTS chunk queue
         while not self._tts_chunk_queue.empty():

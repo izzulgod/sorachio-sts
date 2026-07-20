@@ -104,6 +104,15 @@ class ShortTermMemory:
                 entries = entries[-n:]
             return entries
 
+    async def mark_last_interrupted(self) -> None:
+        """Mark the most recent assistant message in the window as interrupted."""
+        async with self._lock:
+            if not self._window:
+                return
+            # Find the last message (usually assistant) and mark it
+            self._window[-1].metadata["interrupted"] = True
+            log.debug(f"[STM] Marked last message ({self._window[-1].role}) as interrupted")
+
     async def get_chat_messages(self, n: int | None = None) -> list[dict[str, str]]:
         """Get recent entries formatted as LLM chat messages."""
         entries = await self.get_recent(n)

@@ -1,4 +1,4 @@
 """Sorachio-STS TTS package."""
-from .kokoro_client import KokoroTTSClient
+from .piper_client import PiperTTSClient
 
-__all__ = ["KokoroTTSClient"]
+__all__ = ["PiperTTSClient"]

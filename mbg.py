@@ -55,14 +55,7 @@ MODELS_DIR = PROJECT_ROOT / "models"
 VENV_DIR = PROJECT_ROOT / "venv_runtime"
 
 # Model configurations (only STT is auto-downloaded; LLM models are user-managed)
-MODELS = {
-    "stt": {
-        "dir": MODELS_DIR / "stt",
-        "file": "ggml-base.en.bin",
-        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
-        "description": "Whisper STT model (148MB)",
-    },
-}
+MODELS = {}
 
 # LLM model directories (auto-detected, user-managed)
 LLM_MODEL_DIRS = {
@@ -88,12 +81,6 @@ BINARIES = {
             "-DGGML_F16C=ON",
         ],
         "check_args": ["--version"],
-    },
-    "whisper-cli": {
-        "repo": "whisper.cpp",
-        "url": "https://github.com/ggerganov/whisper.cpp",
-        "build_args": [],
-        "check_args": ["--help"],
     },
 }
 
@@ -279,7 +266,8 @@ class MasterBootstrapGuardian:
         """Quick check: can we import critical packages and find system libs?"""
         critical_packages = [
             "httpx", "aiohttp", "pydantic", "sounddevice",
-            "numpy", "rich", "typer", "kokoro", "cv2", "PIL",
+            "numpy", "rich", "typer", "faster_whisper", "piper",
+            "langdetect", "cv2", "PIL",
         ]
         for pkg in critical_packages:
             try:
@@ -526,8 +514,9 @@ class MasterBootstrapGuardian:
             "typer>=0.12.0",
             "python-dotenv",
             "structlog",
-            "kokoro>=0.9.2",
-            "misaki[en]",
+            "faster-whisper",
+            "piper-tts",
+            "langdetect",
             "opencv-python",
             "Pillow",
         ]
@@ -762,36 +751,16 @@ class MasterBootstrapGuardian:
             return False
 
     def _download_models(self) -> None:
-        """Download STT model, preload Kokoro TTS assets, and verify LLM model directories."""
+        """Verify LLM model directories and ensure Piper model dir exists."""
         log.info("Checking models...")
-
-        # Download auto-downloadable models (STT only)
-        for model_name, config in MODELS.items():
-            self._download_model(model_name, config)
-
-        # Preload Kokoro TTS assets (huggingface cache)
-        self._preload_kokoro_assets()
 
         # Verify LLM model directories (user-managed, auto-detected)
         for name, config in LLM_MODEL_DIRS.items():
             self._verify_llm_model_dir(name, config)
 
-    def _preload_kokoro_assets(self) -> None:
-        """Preload Kokoro TTS model and voices into local cache to avoid download prompts in main UI."""
-        log.info("Checking Kokoro TTS cache assets...")
-        try:
-            # Import within the function since kokoro is in the virtual environment
-            from kokoro import KPipeline
-            log.info("Preloading Kokoro-82M model and English voices...")
-            # This triggers download of ONNX model and default voices/dictionaries
-            pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
-            # Run a dummy synthesis to ensure phonemizer/misaki databases are cached
-            generator = pipeline("Warmup", voice="af_heart", speed=1.0)
-            for _ in generator:
-                break
-            log.info("Kokoro TTS cache assets ready [OK]")
-        except Exception as e:
-            log.warning(f"Could not preload Kokoro assets during bootstrap: {e}")
+        # Create Piper models directory
+        pip_models_dir = MODELS_DIR / "tts"
+        pip_models_dir.mkdir(parents=True, exist_ok=True)
 
     def _download_model(self, name: str, config: dict) -> None:
         """Download a single model."""
