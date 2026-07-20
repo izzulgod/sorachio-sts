@@ -1091,5 +1091,3 @@ This project is a foundation. All contributions welcome:
 - Alternative STT/TTS backends
 - Vector database LTM implementation
 - ROS2 bridge
-- Multi-modal capabilities
-- Vision pipeline integration
