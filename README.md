@@ -716,28 +716,9 @@ python mbg.py --version # Show version
 
 ## 17. Troubleshooting
 
-### "Loading components..." stuck on startup
-
-Stale HuggingFace lock file from a previous Ctrl+C. Fix:
-
-```bash
-rm -f ~/.cache/huggingface/hub/.locks/models--Systran--faster-whisper-small/*.lock
-```
-
-Then restart.
-
 ### "Binary not found" / llama-server missing
 
 On Windows: binary must be `llama-server.exe` in `bin/`. Run `python mbg.py --check` to verify.
-
-### Response language is wrong (English input → Indonesian response)
-
-The text-level language verifier should automatically correct this. Check logs for:
-```
-[STT] Language route → en
-[STT] ✓ Result (en): 'Introduce yourself.'
-```
-If you see `route → id` for English phrases, the audio classifier may need tuning in `stt/whisper_client.py`.
 
 ### Sorachio interrupts itself during playback
 
