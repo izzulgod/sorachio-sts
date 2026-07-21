@@ -112,6 +112,7 @@ class AudioCapture:
         # "logically muted").  VAD still runs so interrupt detection works,
         # but audio never reaches the STT queue.
         self._muted = threading.Event()
+        self._playback_preroll_frames = 0
 
         # ── Probe audio input device at init ─────────────────────
         self._audio_available = self._probe_input_device()
@@ -268,6 +269,7 @@ class AudioCapture:
             if not getattr(self, "_in_playback", False):
                 self._in_playback = True
                 self._speaker_baseline_dbfs = max(dbfs, cal_thresh + 10.0)
+                self._playback_preroll_frames = 6  # 6 frames * 30ms = 180ms pre-roll warmup
             else:
                 # Fast attack on peaks, slow decay (0.2 dB per frame) during pauses between words
                 if dbfs > self._speaker_baseline_dbfs:
@@ -276,12 +278,19 @@ class AudioCapture:
                     self._speaker_baseline_dbfs = max(cal_thresh + 6.0, self._speaker_baseline_dbfs - 0.2)
 
             # High-watermark threshold during playback: speaker peak + 7.0 dB (min -20.0 dBFS)
-            # This ensures speaker bleed during word pauses NEVER triggers a false self-interrupt.
-            playback_thresh = max(-20.0, self._speaker_baseline_dbfs + 7.0)
+            # During the pre-roll warmup period, we force threshold very high (-10.0 dBFS)
+            # to let baseline stabilize and prevent false startup interrupts.
+            if getattr(self, "_playback_preroll_frames", 0) > 0:
+                self._playback_preroll_frames -= 1
+                playback_thresh = -10.0
+            else:
+                playback_thresh = max(-15.0, self._speaker_baseline_dbfs + 7.0)
+
             self._acoustic_gate.threshold_dbfs = playback_thresh
         else:
             if getattr(self, "_in_playback", False):
                 self._in_playback = False  # Mark transition back to idle
+                self._playback_preroll_frames = 0
             self._speaker_baseline_dbfs = cal_thresh
             self._acoustic_gate.threshold_dbfs = cal_thresh
 
@@ -310,8 +319,9 @@ class AudioCapture:
             _log_event("VAD queue full, dropped audio frame", force=True)
 
     def _vad_worker(self) -> None:
-        """VAD processing thread — detects speech segments."""
+        """VAD processing thread — detects speech segments with pre-trigger history."""
         speech_frames: list[bytes] = []
+        history_frames: list[bytes] = []  # Rolling buffer of frames prior to speech onset
         triggered = False
         silent_frames = 0
         active_speech_frames = 0
@@ -321,7 +331,6 @@ class AudioCapture:
         max_frames = int(self.max_speech_duration_s * 1000 / self.chunk_ms)
 
         # Minimum active speech frames (non-silence) to consider it a real speech turn.
-        # 6 frames * 30ms = 180ms of actual voice. Prevents pops/clicks from triggering.
         min_active_speech_frames = 6
 
         while self._running:
@@ -347,11 +356,21 @@ class AudioCapture:
                     log.error(f"[VAD ERROR] is_speech failed: {e}")
                     is_speech = False
 
+            # Keep a rolling history of the last 8 frames (~240ms) prior to triggering speech.
+            # This captures the consonants/quiet onsets of words (e.g. "co" in "coba").
+            if not triggered and pcm != b"":
+                history_frames.append(pcm)
+                if len(history_frames) > 8:
+                    history_frames.pop(0)
+
             if is_speech:
                 if not triggered:
                     triggered = True
                     active_speech_frames = 0
-                    _log_event("VAD state: Speech started", force=True)
+                    # Prepend the pre-trigger history to catch speech onset
+                    speech_frames.extend(history_frames)
+                    history_frames.clear()
+                    _log_event("VAD state: Speech started (prepended history)", force=True)
                     log.debug("[VAD] Speech detected")
                     if self._loop:
                         from core.events import EventType, get_bus
@@ -378,6 +397,7 @@ class AudioCapture:
 
                         # Purge speaker audio buffered prior to interrupt trigger
                         speech_frames.clear()
+                        history_frames.clear()
                         active_speech_frames = 0
                         silent_frames = 0
                         interrupt_speech_frames = 0
@@ -393,6 +413,7 @@ class AudioCapture:
                     _log_event("VAD: Max duration exceeded, flushing now", force=True)
                     self._flush_speech(speech_frames, active_speech_frames, min_active_speech_frames)
                     speech_frames = []
+                    history_frames.clear()
                     triggered = False
                     silent_frames = 0
                     active_speech_frames = 0
@@ -414,6 +435,7 @@ class AudioCapture:
                         # End of utterance
                         self._flush_speech(speech_frames, active_speech_frames, min_active_speech_frames)
                         speech_frames = []
+                        history_frames.clear()
                         triggered = False
                         silent_frames = 0
                         active_speech_frames = 0

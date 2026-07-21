@@ -319,6 +319,7 @@ class SorachioPipeline:
             if transcript:
                 # Propagate detected language to TTS for voice routing
                 detected_lang = self._stt.last_detected_language
+                self._last_stt_lang = detected_lang
                 if detected_lang and hasattr(self._tts, 'set_language'):
                     self._tts.set_language(detected_lang, from_stt=True)
 
@@ -378,6 +379,7 @@ class SorachioPipeline:
 
             # Cognitive Gateway analysis
             decision = await self._cognitive.analyze(transcript)
+            decision["detected_language"] = getattr(self, "_last_stt_lang", None)
             self._cognitive_queue.task_done()
 
             await self.bus.emit(

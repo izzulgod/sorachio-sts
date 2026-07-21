@@ -148,6 +148,11 @@ def _is_hallucination(text: str) -> bool:
                         log.debug(f"[STT] Filtered ngram repetition loop: {ngram1} repeated {repeats} times")
                         return True
 
+    # 4. Filter out developer name/domain name hallucinations generated on silence/noise
+    if "izzulgod.com" in normalised or "translated by" in normalised or normalised == "izzulgod":
+        log.debug(f"[STT] Filtered developer/domain hallucination: '{text}'")
+        return True
+
     # Single word of 4 chars or fewer is almost certainly noise
     if len(normalised.split()) == 1 and len(normalised.rstrip(".,!?")) <= 4:
         return True
@@ -219,12 +224,23 @@ class WhisperClient:
         try:
             from faster_whisper import WhisperModel
 
-            self._model = WhisperModel(
-                self.model_size,
-                device=self.device,
-                compute_type=self.compute_type,
-                cpu_threads=self.threads,
-            )
+            try:
+                self._model = WhisperModel(
+                    self.model_size,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    cpu_threads=self.threads,
+                    local_files_only=True,
+                )
+            except Exception as offline_err:
+                log.info(f"[STT] Local offline load failed for '{self.model_size}', checking online: {offline_err}")
+                self._model = WhisperModel(
+                    self.model_size,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    cpu_threads=self.threads,
+                    local_files_only=False,
+                )
 
             log.info(f"[STT] Model '{self.model_size}' loaded successfully")
 
@@ -361,10 +377,8 @@ class WhisperClient:
                         f"id+ms+jw+su: {total_id_prob:.3f} (corrected: {corrected_id_prob:.3f})"
                     )
                     
-                    # Route to Indonesian if the corrected probability exceeds
-                    # English, OR if raw Indonesian probability is above a low
-                    # threshold (catches clear Indonesian even with noisy probs)
-                    if corrected_id_prob > en_prob or total_id_prob > 0.08:
+                    # Route to Indonesian if corrected probability exceeds English AND raw prob > 0.20
+                    if corrected_id_prob > en_prob and total_id_prob > 0.20:
                         target_lang = "id"
                     else:
                         target_lang = "en"
@@ -409,12 +423,16 @@ class WhisperClient:
             transcript = _clean_transcript(full_text)
 
             if transcript:
+                # Text-level language verification to fix audio classifier misdetections (e.g. "Introduce...")
+                verified_lang = self._verify_text_language(transcript, target_lang)
+                self._last_detected_language = verified_lang
+
                 # Filter out known Whisper hallucinations
                 if _is_hallucination(transcript):
                     log.info(f"[STT] Filtered hallucination: {transcript!r}")
                     return None
 
-                log.info(f"[STT] ✓ Result ({target_lang}): {transcript!r}")
+                log.info(f"[STT] ✓ Result ({verified_lang}): {transcript!r}")
             else:
                 log.info("[STT] Empty transcript (no speech detected)")
 
@@ -423,3 +441,29 @@ class WhisperClient:
         except Exception as e:
             log.error(f"[STT] Transcription error: {e}", exc_info=True)
             return None
+
+    def _verify_text_language(self, text: str, initial_lang: str) -> str:
+        """
+        Verify and correct Whisper's audio language classification using text content.
+        Whisper's audio classifier often misclassifies English words starting with 'In-'
+        ('Introduce', 'Inside') as 'id' (Indonesian).
+        """
+        id_keywords = {
+            "saya", "aku", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih",
+            "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "perkenalkan",
+            "siapa", "namamu", "ceritakan", "lihat", "bagaimana", "kabarlah", "kabar"
+        }
+        import re
+        words = set(re.findall(r'\b\w+\b', text.lower()))
+        if len(words.intersection(id_keywords)) >= 1:
+            return "id"
+
+        try:
+            from langdetect import detect
+            text_lang = detect(text)
+            if text_lang == "en":
+                return "en"
+        except Exception:
+            pass
+
+        return initial_lang

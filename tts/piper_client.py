@@ -347,6 +347,10 @@ class PiperTTSClient:
         for old, new in replacements.items():
             text = text.replace(old, new)
 
+        # Remove Unicode emojis / high-plane symbol characters (e.g. 😊, 🌟, ✨, 🙏)
+        import re
+        text = re.sub(r'[\U00010000-\U0010ffff]', '', text)
+
         # Normalize whitespace
         text = " ".join(text.split())
 
@@ -374,10 +378,11 @@ class PiperTTSClient:
         if not self._response_lang_locked:
             self._response_text_acc += " " + text
             # Only attempt detection once we have enough chars for confidence
-            if len(self._response_text_acc.strip()) >= 20:
+            if len(self._response_text_acc.strip()) >= 15:
                 detected = self._detect_text_language(self._response_text_acc.strip())
                 if detected:
-                    self.set_language(detected)
+                    self._current_lang = detected
+                    log.info(f"[TTS] Active voice matched to generated text language: '{detected}'")
                 self._response_lang_locked = True
 
         loop = asyncio.get_event_loop()
