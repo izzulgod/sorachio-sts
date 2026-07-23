@@ -332,7 +332,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
     # ------------------------------------------------------------------
 
     if single_message:
-        console.print(f"\n[bold cyan]You[/bold cyan]\n└─ {single_message}\n")
+        console.print(f"\n[bold cyan]You[/bold cyan]\n> {single_message}\n")
         voice_cli.start()
         response_ready.clear()
         await get_bus().emit(EventType.STT_RESULT, data=single_message, source="cli")
@@ -350,7 +350,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
                 console.print("\n[bold cyan]You[/bold cyan]")
                 user_input = await asyncio.get_running_loop().run_in_executor(
                     None,
-                    lambda: input("└─ ")
+                    lambda: input("> ")
                 )
 
                 user_input = user_input.strip()
@@ -593,7 +593,7 @@ class VoiceCLI:
         self.response_text = ""
         self._spin_stop()
         if self.mode == "text":
-            console.print("[bold green]Sorachio[/bold green]\n└─ ", end="")
+            console.print("[bold green]Sorachio[/bold green]\n> ", end="")
         else:
             console.print("[bold cyan]Sorachio:[/bold cyan] ", end="")
 
@@ -601,7 +601,7 @@ class VoiceCLI:
         token = event.data
         self.response_text += token
         if self.mode == "text":
-            token = token.replace("\n", "\n   ")
+            token = token.replace("\n", "\n  ")
         console.print(token, end="", highlight=False)
 
     async def on_response_end(self, event) -> None:
