@@ -79,6 +79,8 @@ class SingleServerManager:
         # Reasoning/thinking mode control
         if self.config.reasoning in ("on", "off", "auto"):
             cmd.extend(["--reasoning", self.config.reasoning])
+            if self.config.reasoning == "off":
+                cmd.extend(["--reasoning-budget", "0"])
 
         # Multimodal vision projector
         if self.mmproj_path and self.mmproj_path.exists():

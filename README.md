@@ -68,17 +68,19 @@ The system is designed from the ground up as a **scalable AI companion operating
 
 ### Current Model Configuration
 
-| Slot | Model | Size | Role | Notes |
-|------|-------|------|------|-------|
-| LLM #1 | Qwen3.5-0.8B (Q8_0) | 774 MB | Cognitive Gateway (JSON router) | No vision |
-| LLM #2 | Qwen3.5-2B (Q8_0) | ~1.9 GB | Personality Core (conversation) | **Vision** via mmproj |
-| STT | faster-whisper small | ~484 MB | Speech-to-Text (multilingual) | Auto ID/EN language detection |
-| TTS (EN) | Kokoro-82M (`af_heart`) | ~300 MB | English female voice | PyTorch/ONNX, 24kHz native |
-| TTS (ID) | Piper `id_ID-news_tts-medium` | ~67 MB | Indonesian female voice | ONNX, 22.05kHz -> 24kHz resampled |
+| Slot | Model | Size | Role | Local Path |
+|------|-------|------|------|------------|
+| LLM #1 | Qwen3.5-0.8B (Q8_0) | 774 MB | Cognitive Gateway (JSON router) | `models/llm1/` |
+| LLM #2 | Qwen3.5-2B (Q8_0) | ~1.9 GB | Personality Core (conversation) + **Vision** | `models/llm2/` |
+| STT | faster-whisper small | ~484 MB | Speech-to-Text (multilingual ID/EN) | `models/stt/` |
+| TTS (EN) | Kokoro-82M (`af_heart`) | ~327 MB | English female voice — 24kHz native | `models/tts/kokoro/` |
+| TTS (ID) | Piper `id_ID-news_tts-medium` | ~67 MB | Indonesian female voice — 22.05kHz→24kHz | `models/tts/` |
 
-> **Flexible Model Swapping**: LLM models are auto-detected from `models/llm1/` and `models/llm2/` directories. Just drop a new `.gguf` file and restart.
+> **All model weights live inside the project** under `models/` — no cloud cache, no `~/.cache` writes. Everything is self-contained and portable.
 
-> **STT/TTS Models**: All STT and TTS models are **automatically downloaded on first run** by MBG — no manual setup required.
+> **Flexible Model Swapping**: LLM models are auto-detected from `models/llm1/` and `models/llm2/`. Just drop a new `.gguf` and restart.
+
+> **STT/TTS Models**: Automatically downloaded to `models/` on first run by MBG — no manual setup required.
 
 ---
 
@@ -301,10 +303,18 @@ Sorachio-STS/
 +-- models/
 |   +-- llm1/               # Drop any GGUF here for Cognitive Gateway
 |   +-- llm2/               # Drop any GGUF + optional mmproj here
-|   +-- tts/                # Piper ONNX models (auto-downloaded by MBG)
+|   +-- stt/                # faster-whisper weights (auto-downloaded by MBG)
+|   +-- tts/
+|       +-- id_ID-news_tts-medium.onnx  # Piper Indonesian voice (auto-downloaded)
+|       +-- id_ID-news_tts-medium.onnx.json
+|       +-- kokoro/         # Kokoro-82M English TTS weights (auto-downloaded)
 |
 +-- bin/
 |   +-- llama-server        # llama-server binary (built by MBG or placed manually)
+|   +-- libggml-vulkan.so   # Vulkan GPU backend shared library (Linux)
+|   +-- libggml.so          # GGML core (Linux)
+|   +-- libllama.so         # llama.cpp runtime (Linux)
+|   +-- *.dll               # Windows: all DLLs copied alongside llama-server.exe
 |
 +-- data/
 |   +-- memory/
@@ -424,11 +434,13 @@ MBG handles everything else automatically:
 
 ### What MBG Downloads Automatically
 
-| Asset | Size | Purpose | Location |
-|-------|------|---------|---------|
-| faster-whisper-small | ~484 MB | STT model | `~/.cache/huggingface/hub/` |
-| Kokoro-82M | ~300 MB | English TTS model (`af_heart`) | `~/.cache/huggingface/hub/` |
-| id_ID-news_tts-medium | ~67 MB | Indonesian TTS voice (Piper) | `models/tts/` |
+| Asset | Size | Purpose | Local Path |
+|-------|------|---------|------------|
+| faster-whisper-small | ~484 MB | STT model | `models/stt/` |
+| Kokoro-82M + voices | ~327 MB | English TTS (`af_heart`) | `models/tts/kokoro/` |
+| id_ID-news_tts-medium | ~67 MB | Indonesian TTS voice (Piper ONNX) | `models/tts/` |
+
+> All downloads are stored **inside the project directory** under `models/`. Nothing is written to your home directory cache.
 
 LLM models are **user-managed** — download from Hugging Face and place in `models/llm1/` or `models/llm2/`.
 
@@ -697,11 +709,13 @@ python main.py memory clear [--yes]
 - Python 3.10–3.12 version management and auto-relaunch
 - Creates and manages `venv_runtime/` virtual environment
 - Installs Python packages + system dependencies (Vulkan, PortAudio)
-- Builds `llama-server` from source (Linux/macOS) with Vulkan GPU offload
+- Builds `llama-server` from source (Linux/macOS) with **Vulkan GPU backend** (auto-detected)
+- Copies all Vulkan/GGML shared libraries (`libggml-vulkan.so`, `libllama.so`, etc.) alongside binary
 - Applies `cap_ipc_lock` for zero-swap RAM locking on Linux
-- Downloads `faster-whisper-small` STT model and `Kokoro-82M` English TTS model to HuggingFace cache
+- Downloads `faster-whisper-small` STT model to `models/stt/` (self-contained, no `~/.cache`)
+- Downloads `Kokoro-82M` English TTS weights + voice files to `models/tts/kokoro/`
 - Downloads Piper ONNX Indonesian TTS voice (`id_ID-news_tts-medium`) to `models/tts/`
-- Auto-detects GGUF models and vision projectors
+- Auto-detects GGUF models and vision projectors in `models/llm1/` and `models/llm2/`
 
 ### Commands
 
@@ -757,9 +771,18 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
 ### High latency
 
 1. Enable GPU: `n_gpu_layers: 99` in config
-2. Rebuild with Vulkan: `python mbg.py --force --build`
+2. Rebuild with Vulkan: `python mbg.py --force --build` (auto-copies `libggml-vulkan.so` to `bin/`)
 3. Reduce `max_tokens: 150` in personality_core
-4. Lock RAM: ensure `cap_ipc_lock` is applied (auto by MBG on Linux)
+4. Increase batch size: `n_batch: 512` in personality_core for faster first-token latency
+5. Lock RAM: ensure `cap_ipc_lock` is applied (auto by MBG on Linux)
+
+### LLM response suddenly slow
+
+Likely the Vulkan GPU backend `.so` files are missing from `bin/` (llama-server falls back to CPU). Run:
+```bash
+python mbg.py --force --build
+```
+This rebuilds llama-server with Vulkan and copies all backend libraries to `bin/` automatically.
 
 ---
 
