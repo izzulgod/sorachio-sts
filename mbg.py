@@ -267,7 +267,7 @@ class MasterBootstrapGuardian:
         critical_packages = [
             "httpx", "aiohttp", "pydantic", "sounddevice",
             "numpy", "rich", "typer", "faster_whisper", "piper",
-            "langdetect", "cv2", "PIL",
+            "kokoro", "misaki", "langdetect", "cv2", "PIL",
         ]
         for pkg in critical_packages:
             try:
@@ -333,32 +333,38 @@ class MasterBootstrapGuardian:
             "apt-get": [
                 "libportaudio2", "portaudio19-dev", "libsndfile1",
                 "pulseaudio", "libpulse-dev", "libasound2-dev", "libasound2-plugins",
-                "libvulkan-dev", "vulkan-tools", "spirv-headers", "glslang-tools", "shaderc"
+                "libvulkan-dev", "vulkan-tools", "spirv-headers", "glslang-tools", "shaderc",
+                "espeak-ng", "libespeak-ng-dev"
             ],
             "dnf": [
                 "portaudio", "portaudio-devel", "libsndfile",
                 "pulseaudio", "pulseaudio-libs-devel", "alsa-lib-devel", "alsa-plugins-pulseaudio",
-                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "glslc", "glslang"
+                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "glslc", "glslang",
+                "espeak-ng", "espeak-ng-devel"
             ],
             "yum": [
                 "portaudio", "portaudio-devel", "libsndfile",
                 "pulseaudio", "pulseaudio-libs-devel", "alsa-lib-devel", "alsa-plugins-pulseaudio",
-                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "glslc", "glslang"
+                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "glslc", "glslang",
+                "espeak-ng", "espeak-ng-devel"
             ],
             "pacman": [
                 "portaudio", "libsndfile",
                 "pulseaudio", "alsa-lib", "pulseaudio-alsa",
-                "vulkan-devel", "spirv-headers", "spirv-tools", "shaderc"
+                "vulkan-devel", "spirv-headers", "spirv-tools", "shaderc",
+                "espeak-ng"
             ],
             "zypper": [
                 "portaudio", "portaudio-devel", "libsndfile",
                 "pulseaudio", "alsa-devel", "alsa-plugins-pulse",
-                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "shaderc"
+                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "shaderc",
+                "espeak-ng", "espeak-ng-devel"
             ],
             "apk": [
                 "portaudio-dev", "libsndfile-dev",
                 "pulseaudio-dev", "alsa-lib-dev", "alsa-plugins-pulse",
-                "vulkan-headers", "shaderc"
+                "vulkan-headers", "shaderc",
+                "espeak-ng"
             ],
         }
 
@@ -516,6 +522,8 @@ class MasterBootstrapGuardian:
             "structlog",
             "faster-whisper",
             "piper-tts",
+            "kokoro",
+            "misaki[en]",
             "langdetect",
             "opencv-python",
             "Pillow",
@@ -800,6 +808,19 @@ class MasterBootstrapGuardian:
                     log.warning(f"[MBG] Failed to download TTS voice '{voice_name}': {e}")
             else:
                 log.info(f"[MBG] TTS voice '{voice_name}' is ready [OK]")
+
+        # 4. Pre-download & warm up Kokoro TTS model for English
+        try:
+            log.info("[MBG] Verifying Kokoro TTS model ('hexgrad/Kokoro-82M')...")
+            from kokoro import KPipeline
+            pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+            generator = pipeline("Hello", voice="af_heart", speed=1.0, split_pattern=None)
+            for res in generator:
+                _ = res[-1]
+                break
+            log.info("[MBG] Kokoro TTS model ('hexgrad/Kokoro-82M') is ready [OK]")
+        except Exception as e:
+            log.warning(f"[MBG] Kokoro TTS model verification failed: {e}")
 
     def _download_model(self, name: str, config: dict) -> None:
         """Download a single model."""

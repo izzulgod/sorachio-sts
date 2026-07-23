@@ -167,9 +167,9 @@ class SorachioPipeline:
         )
 
         # ---- TTS ----
-        from tts.piper_client import PiperTTSClient
+        from tts.kokoro_client import KokoroTTSClient
         tts_cfg = cfg.tts
-        self._tts = PiperTTSClient(
+        self._tts = KokoroTTSClient(
             audio_queue=self._audio_queue,
             voice=tts_cfg.voice,
             speed=tts_cfg.speed,

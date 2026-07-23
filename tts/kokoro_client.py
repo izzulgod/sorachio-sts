@@ -1,27 +1,41 @@
 """
-Sorachio-STS Kokoro TTS Client
-Streaming text-to-speech synthesis using the kokoro Python library.
+Sorachio-STS Kokoro & Hybrid TTS Client
+Streaming text-to-speech synthesis using Kokoro for English and Piper for Indonesian.
 
 Pipeline:
-  speech chunk (string) → Kokoro synthesis → numpy audio array → playback queue
+  speech chunk (string) → Language Router → TTS Engine (Kokoro / Piper)
+  → numpy audio array (resampled to target rate) → playback queue
 
 Features:
-  - In-process synthesis (no subprocess overhead)
-  - Streams per-chunk audio immediately
-  - Falls back gracefully if kokoro unavailable
-  - Configurable voice, speed, and language
-  - Defensive sanitization for unstable TTS input
+  - Kokoro TTS for natural, high-quality English voice synthesis (af_heart)
+  - Piper TTS for fast Indonesian voice synthesis (id_ID-news_tts-medium)
+  - In-process streaming synthesis (no subprocess overhead)
+  - Automatic language detection & STT language lock support
+  - Auto-resampling to target sample rate (24000 Hz)
+  - Defensive sanitization for text formatting and emojis
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
+from pathlib import Path
 
 import numpy as np
 
+from tts.piper_client import PiperTTSClient
 from utils.logging_setup import get_logger
 
 log = get_logger("tts.kokoro")
+
+
+def _resample_audio(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+    """Resample 1D float32 audio array using linear interpolation."""
+    if orig_sr == target_sr or len(audio) == 0:
+        return audio
+    num_samples = int(round(len(audio) * target_sr / orig_sr))
+    indices = np.linspace(0, len(audio) - 1, num_samples)
+    return np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -30,11 +44,10 @@ log = get_logger("tts.kokoro")
 
 class KokoroTTSClient:
     """
-    Kokoro TTS wrapper that synthesizes text chunks and queues audio.
+    Hybrid TTS Client combining Kokoro (English) and Piper (Indonesian).
 
-    Each text chunk is synthesized synchronously in an executor
-    (to avoid blocking the event loop) and the audio is placed
-    in the audio playback queue for immediate playback.
+    Synthesizes text chunks asynchronously without blocking the event loop
+    and places audio arrays into the audio queue for playback.
     """
 
     def __init__(
@@ -42,68 +55,85 @@ class KokoroTTSClient:
         audio_queue: asyncio.Queue,
         voice: str = "af_heart",
         speed: float = 1.0,
-        lang: str = "a",
+        lang: str = "auto",
         sample_rate: int = 24000,
+        models_dir: str = "models/tts",
     ):
         self.audio_queue = audio_queue
         self.voice = voice
         self.speed = speed
         self.lang = lang
         self.sample_rate = sample_rate
+        self.models_dir = Path(models_dir)
 
+        # Kokoro pipeline (English)
         self._pipeline = None
+        self._kokoro_available = False
+
+        # Piper client (Indonesian fallback / primary for 'id')
+        self._piper_client = PiperTTSClient(
+            audio_queue=asyncio.Queue(),  # Internal queue for direct chunk synthesis
+            voice="id_ID-news_tts-medium",
+            speed=speed,
+            lang="id",
+            sample_rate=22050,
+            models_dir=str(models_dir),
+        )
+        self._piper_available = False
+
+        self._current_lang = "en"
+        self._stt_lang_locked = False
         self._available = False
 
     async def initialize(self) -> bool:
-        """Load Kokoro model (blocking, run once at startup)."""
+        """Initialize both Kokoro (English) and Piper (Indonesian) models."""
         loop = asyncio.get_event_loop()
-        ok = await loop.run_in_executor(None, self._load_pipeline)
 
-        self._available = ok
+        # Load Kokoro in thread pool
+        kokoro_ok = await loop.run_in_executor(None, self._load_kokoro)
+        self._kokoro_available = kokoro_ok
 
-        if ok:
+        # Load Piper for Indonesian
+        try:
+            piper_ok = await self._piper_client.initialize()
+            self._piper_available = piper_ok
+        except Exception as e:
+            log.warning(f"[TTS] Piper initialization failed: {e}")
+            self._piper_available = False
+
+        self._available = self._kokoro_available or self._piper_available
+
+        if self._kokoro_available and self._piper_available:
             log.info(
-                f"[TTS] Kokoro ready — voice={self.voice} "
-                f"speed={self.speed} lang={self.lang}"
+                f"[TTS] Hybrid TTS ready — English: Kokoro ({self.voice}) | "
+                f"Indonesian: Piper (id_ID-news_tts-medium)"
             )
+        elif self._kokoro_available:
+            log.info(f"[TTS] Kokoro TTS ready — voice={self.voice} (English active)")
+        elif self._piper_available:
+            log.info("[TTS] Piper TTS ready (Indonesian active)")
         else:
-            log.warning(
-                "[TTS] Kokoro not available — install with: pip install kokoro"
-            )
+            log.warning("[TTS] No TTS engines available!")
 
-        return ok
+        return self._available
 
-    def _load_pipeline(self) -> bool:
-        """Load Kokoro pipeline in thread (avoids blocking event loop)."""
-
+    def _load_kokoro(self) -> bool:
+        """Load Kokoro pipeline in thread."""
         try:
             from kokoro import KPipeline
 
-            # ----------------------------------------------------------------
-            # Kokoro language mapping
-            #
-            # a = American English
-            # b = British English
-            # ----------------------------------------------------------------
-
             lang_lower = self.lang.lower()
-
-            if lang_lower in ["a", "en", "en-us", "us"]:
-                lang_code = "a"
-            elif lang_lower in ["b", "en-gb", "gb", "uk"]:
+            if lang_lower in ["b", "en-gb", "gb", "uk"]:
                 lang_code = "b"
             else:
-                log.warning(
-                    f"[TTS] Unknown language '{self.lang}', defaulting to American English"
-                )
-                lang_code = "a"
+                lang_code = "a"  # American English default
 
             self._pipeline = KPipeline(
                 lang_code=lang_code,
                 repo_id="hexgrad/Kokoro-82M",
             )
 
-            # Warmup synthesis to preload model/voice
+            # Warmup synthesis
             try:
                 generator = self._pipeline(
                     "Hello",
@@ -111,165 +141,183 @@ class KokoroTTSClient:
                     speed=self.speed,
                     split_pattern=None,
                 )
-
                 for result in generator:
-                    # Kokoro may return (gs, ps, audio) or (ps, audio) depending on version
-                    # Always take the last element which is the audio array
                     _ = result[-1]
                     break
-
-                log.info("[TTS] Kokoro warmup complete")
-
+                log.info("[TTS] Kokoro warmup complete [OK]")
             except Exception as warmup_error:
-                log.warning(f"[TTS] Warmup failed: {warmup_error}")
+                log.warning(f"[TTS] Kokoro warmup failed: {warmup_error}")
 
             return True
 
         except ImportError:
-            log.error(
-                "[TTS] kokoro not installed. Run: pip install kokoro[onnx]"
-            )
+            log.error("[TTS] kokoro package not installed. Run: pip install kokoro")
             return False
-
         except Exception as e:
             log.error(f"[TTS] Failed to load Kokoro: {e}", exc_info=True)
             return False
 
-    def _sanitize_text(self, text: str) -> str:
+    def set_language(self, lang: str, from_stt: bool = False) -> None:
         """
-        Clean problematic text before sending to Kokoro.
-        Prevents crashes in misaki phoneme pipeline.
+        Set the active language for TTS routing.
+        Called when STT detects user language or language preference changes.
         """
+        if from_stt:
+            self._stt_lang_locked = True
 
+        target = "id" if lang and lang.lower().startswith("id") else "en"
+        if target != self._current_lang:
+            log.info(f"[TTS] Language routing changed: {self._current_lang} → {target}")
+            self._current_lang = target
+
+        if self._piper_client:
+            self._piper_client.set_language(lang, from_stt=from_stt)
+
+    def _detect_text_language(self, text: str) -> str:
+        """Detect if text is Indonesian ('id') or English ('en')."""
+        if not text:
+            return "en"
+
+        id_keywords = {
+            "saya", "aku", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih",
+            "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "bicarakan",
+            "perkenalkan", "diri", "hari", "merasa", "teman", "setia", "sekali", "baik",
+            "ya", "sih", "kok", "aja", "udah", "kan", "dong", "bagus", "siapa", "dimana"
+        }
+        words = set(re.findall(r"\b\w+\b", text.lower()))
+        if len(words.intersection(id_keywords)) >= 1:
+            return "id"
+
+        try:
+            from langdetect import DetectorFactory, detect
+            DetectorFactory.seed = 0
+            detected = detect(text)
+            if detected in ("id", "ms", "jw", "su"):
+                return "id"
+        except Exception:
+            pass
+
+        return "en"
+
+    def _sanitize_text(self, text: str) -> str:
+        """Clean problematic characters before TTS synthesis."""
         if not text:
             return ""
 
         text = text.strip()
 
-        # Remove problematic control chars
+        # Remove control chars
         text = "".join(ch for ch in text if ord(ch) >= 32)
 
-        # Replace problematic formatting chars
+        # Remove formatting symbols
         replacements = {
-            "*": "",
-            "#": "",
-            "`": "",
-            "_": " ",
-            "~": "",
-            "|": "",
-            "[": "",
-            "]": "",
-            "{": "",
-            "}": "",
-            "<": "",
-            ">": "",
+            "*": "", "#": "", "`": "", "_": " ", "~": "", "|": "",
+            "[": "", "]": "", "{": "", "}": "", "<": "", ">": "",
         }
-
         for old, new in replacements.items():
             text = text.replace(old, new)
 
+        # Remove Unicode emojis (high-plane code points)
+        text = re.sub(r'[\U00010000-\U0010ffff]', '', text)
+
         # Normalize whitespace
         text = " ".join(text.split())
-
         return text
 
     async def synthesize_chunk(self, text: str) -> np.ndarray | None:
         """
         Synthesize a single text chunk to audio.
-
-        Returns numpy array of audio samples, or None on failure.
-        Runs synthesis in thread executor to not block event loop.
+        Routes to Kokoro for English and Piper for Indonesian.
         """
-
         text = self._sanitize_text(text)
-
         if not text:
             return None
 
+        # Determine target language
+        if self._stt_lang_locked:
+            target_lang = self._current_lang
+        elif self.lang == "auto":
+            target_lang = self._detect_text_language(text)
+        else:
+            target_lang = "id" if self.lang.lower().startswith("id") else "en"
+
         loop = asyncio.get_event_loop()
 
-        def _synth():
-
-            if not self._available or self._pipeline is None:
-                return None
-
+        # ── Indonesian Routing (Piper TTS) ───────────────────────────
+        if target_lang == "id" and self._piper_available:
             try:
-                log.debug(f"[TTS] Sanitized chunk: {text!r}")
+                log.debug(f"[TTS] Synthesizing Indonesian (Piper): {text!r}")
+                audio = await self._piper_client.synthesize_chunk(text)
+                if audio is not None:
+                    # Resample Piper output (22050 Hz) to target sample rate (24000 Hz)
+                    piper_sr = self._piper_client.sample_rate
+                    if piper_sr != self.sample_rate:
+                        audio = _resample_audio(audio, piper_sr, self.sample_rate)
+                    return audio
+            except Exception as e:
+                log.warning(f"[TTS] Piper synthesis failed, trying Kokoro fallback: {e}")
 
-                generator = self._pipeline(
-                    text,
-                    voice=self.voice,
-                    speed=self.speed,
-                    split_pattern=None,  # external chunking already handled
-                )
-
-                audio_segments = []
-
+        # ── English Routing / Primary (Kokoro TTS) ───────────────────
+        if self._kokoro_available and self._pipeline is not None:
+            def _synth_kokoro() -> np.ndarray | None:
                 try:
-                    for result in generator:
-                        # Kokoro may return (gs, ps, audio) or (ps, audio) depending on version
-                        # Always take the last element which is the audio array
-                        audio = result[-1]
-
-                        if audio is None:
-                            continue
-
-                        if not hasattr(audio, '__len__') or len(audio) == 0:
-                            continue
-
-                        audio_segments.append(audio)
-
-                except Exception as gen_error:
-                    log.warning(
-                        f"[TTS] Generator chunk failed: {gen_error}"
+                    log.debug(f"[TTS] Synthesizing English (Kokoro): {text!r}")
+                    generator = self._pipeline(
+                        text,
+                        voice=self.voice,
+                        speed=self.speed,
+                        split_pattern=None,
                     )
+                    audio_segments = []
+                    for result in generator:
+                        audio = result[-1]
+                        if audio is not None and hasattr(audio, "__len__") and len(audio) > 0:
+                            audio_segments.append(audio)
 
-                    if isinstance(gen_error, TypeError) and "NoneType" in str(gen_error):
-                        log.warning(
-                            "[TTS] This usually means espeak-ng is missing or not on "
-                            "PATH (misaki uses it as a fallback for words outside "
-                            "Kokoro's built-in dictionary). Install it from "
-                            "https://github.com/espeak-ng/espeak-ng/releases and "
-                            "restart your terminal."
-                        )
-
+                    if audio_segments:
+                        full_audio = np.concatenate(audio_segments)
+                        return full_audio.astype(np.float32)
+                    return None
+                except Exception as e:
+                    log.error(f"[TTS] Kokoro synthesis error: {e}")
                     return None
 
-                if audio_segments:
-                    return np.concatenate(audio_segments)
+            audio = await loop.run_in_executor(None, _synth_kokoro)
+            if audio is not None:
+                return audio
 
-                return None
-
+        # ── Fallback to Piper if Kokoro fails or unavailable ─────────
+        if self._piper_available:
+            try:
+                log.debug(f"[TTS] Fallback synthesis via Piper: {text!r}")
+                audio = await self._piper_client.synthesize_chunk(text)
+                if audio is not None:
+                    piper_sr = self._piper_client.sample_rate
+                    if piper_sr != self.sample_rate:
+                        audio = _resample_audio(audio, piper_sr, self.sample_rate)
+                    return audio
             except Exception as e:
-                log.error(f"[TTS] Synthesis error: {e}", exc_info=True)
-                return None
+                log.error(f"[TTS] Fallback Piper synthesis error: {e}")
 
-        audio = await loop.run_in_executor(None, _synth)
-
-        return audio
+        return None
 
     async def process_tts_queue(
         self,
         tts_chunk_queue: asyncio.Queue,
         interrupt_event: asyncio.Event,
     ) -> None:
-        """
-        Worker: drain TTS chunk queue, synthesize each chunk, push to audio queue.
-
-        This is the TTS worker loop. Call as an asyncio task.
-        """
+        """Worker loop: drain text chunks, synthesize, put into audio queue."""
+        # Unlock STT language at start of queue processing
+        self._stt_lang_locked = False
 
         while True:
-
             try:
                 chunk = await asyncio.wait_for(
                     tts_chunk_queue.get(),
                     timeout=0.5,
                 )
-
             except asyncio.TimeoutError:
                 continue
-
             except asyncio.CancelledError:
                 break
 
@@ -277,6 +325,7 @@ class KokoroTTSClient:
                 # End-of-stream sentinel
                 await self.audio_queue.put(None)
                 tts_chunk_queue.task_done()
+                self._stt_lang_locked = False
                 continue
 
             if interrupt_event.is_set():
@@ -284,57 +333,31 @@ class KokoroTTSClient:
                 continue
 
             try:
-                log.debug(f"[TTS] Synthesizing: {chunk!r}")
-
+                log.debug(f"[TTS] Synthesizing chunk: {chunk!r}")
                 audio = await self.synthesize_chunk(chunk)
-
                 if audio is not None and not interrupt_event.is_set():
-
                     await self.audio_queue.put(audio)
-
-                    log.debug(
-                        f"[TTS] → Audio queue ({len(audio)} samples)"
-                    )
-
-            except Exception as worker_error:
-                log.error(
-                    f"[TTS] Worker error: {worker_error}",
-                    exc_info=True,
-                )
-
+                    log.debug(f"[TTS] → Audio queue ({len(audio)} samples)")
+            except Exception as e:
+                log.error(f"[TTS] Queue worker error: {e}", exc_info=True)
             finally:
                 tts_chunk_queue.task_done()
 
     async def speak(self, text: str) -> None:
-        """
-        Convenience: synthesize full text and queue all audio directly.
-        Used for startup greeting and test mode.
-        """
-
+        """Convenience method to synthesize full text directly."""
         from utils.chunk_assembler import split_into_chunks
 
-        chunks = split_into_chunks(
-            text,
-            min_words=2,
-            max_words=25,
-        )
-
+        chunks = split_into_chunks(text, min_words=2, max_words=25)
         if not chunks:
             chunks = [text]
 
         for chunk in chunks:
-
             try:
                 audio = await self.synthesize_chunk(chunk)
-
                 if audio is not None:
                     await self.audio_queue.put(audio)
-
-                    # tiny natural pause between chunks
                     await asyncio.sleep(0.05)
-
             except Exception as e:
                 log.warning(f"[TTS] Speak chunk failed: {e}")
 
-        # End-of-stream sentinel
         await self.audio_queue.put(None)

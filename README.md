@@ -54,7 +54,7 @@ The system is designed from the ground up as a **scalable AI companion operating
 
 | Property | Detail |
 |----------|--------|
-| **Fully Local** | All inference runs on-device via llama.cpp + faster-whisper + Piper |
+| **Fully Local** | All inference runs on-device via llama.cpp + faster-whisper + Kokoro TTS / Piper TTS |
 | **Real-Time Streaming** | TTS begins before LLM finishes generating |
 | **Two-LLM Architecture** | Cognitive Gateway (LLM #1) + Personality Core (LLM #2) |
 | **Model-Agnostic** | Auto-detects any GGUF model — just drop and restart |
@@ -73,8 +73,8 @@ The system is designed from the ground up as a **scalable AI companion operating
 | LLM #1 | Qwen3.5-0.8B (Q8_0) | 774 MB | Cognitive Gateway (JSON router) | No vision |
 | LLM #2 | Qwen3.5-2B (Q8_0) | ~1.9 GB | Personality Core (conversation) | **Vision** via mmproj |
 | STT | faster-whisper small | ~484 MB | Speech-to-Text (multilingual) | Auto ID/EN language detection |
-| TTS (EN) | Piper `en_US-lessac-medium` | ~67 MB | English female voice | ONNX, in-process |
-| TTS (ID) | Piper `id_ID-news_tts-medium` | ~67 MB | Indonesian female voice | ONNX, in-process |
+| TTS (EN) | Kokoro-82M (`af_heart`) | ~300 MB | English female voice | PyTorch/ONNX, 24kHz native |
+| TTS (ID) | Piper `id_ID-news_tts-medium` | ~67 MB | Indonesian female voice | ONNX, 22.05kHz -> 24kHz resampled |
 
 > **Flexible Model Swapping**: LLM models are auto-detected from `models/llm1/` and `models/llm2/` directories. Just drop a new `.gguf` file and restart.
 
@@ -151,9 +151,9 @@ The system is designed from the ground up as a **scalable AI companion operating
 |                                           | speech chunks         |
 |                                           v                       |
 |                           +-------------------------------+        |
-|                           |  TTS Worker (Piper ONNX)      |        |
-|                           |  EN text -> en_US-lessac-med  |        |
-|                           |  ID text -> id_ID-news_tts-med|        |
+|                           |  TTS Worker (Kokoro + Piper)  |        |
+|                           |  EN text -> Kokoro (af_heart) |        |
+|                           |  ID text -> Piper (id_ID-news) |        |
 |                           +---------------+---------------+        |
 |                                           | audio arrays          |
 |                                           v                       |
@@ -176,7 +176,7 @@ Python Orchestrator (asyncio event loop)
 +-- HTTP -> llama-server :8001  -- LLM #1 Cognitive Gateway (auto-detected GGUF)
 +-- HTTP -> llama-server :8002  -- LLM #2 Personality Core (auto-detected GGUF + mmproj)
 +-- In-process -> faster-whisper -- STT (multilingual small model, offline)
-+-- In-process -> piper-tts      -- TTS (Piper ONNX, per-chunk synthesis)
++-- In-process -> Kokoro / Piper -- TTS (Kokoro EN 24kHz + Piper ID 22.05kHz->24kHz)
 ```
 
 ---
@@ -219,10 +219,10 @@ Python Orchestrator (asyncio event loop)
     v token stream
 [Chunk Assembler]
     v speech chunks
-[Piper TTS]
-    |  Text language detected -> voice selected
-    |  en text -> en_US-lessac-medium
-    |  id text -> id_ID-news_tts-medium
+[Hybrid TTS Client]
+    |  Text language detected -> engine selected
+    |  en text -> Kokoro TTS (hexgrad/Kokoro-82M, af_heart)
+    |  id text -> Piper TTS (id_ID-news_tts-medium)
     v audio arrays
 [Playback Queue] -> Speaker
 ```
@@ -264,11 +264,12 @@ Sorachio-STS/
 |                           #  - local_files_only=True (offline load, no deadlock)
 |
 +-- tts/
-|   +-- piper_client.py     # Piper ONNX in-process TTS
-|                           #  - Bilingual voice routing (EN/ID)
-|                           #  - Text language detection -> voice matching
-|                           #  - Emoji/symbol sanitizer
-|                           #  - Auto-downloads Piper ONNX models
+|   +-- kokoro_client.py    # Hybrid Kokoro & Piper TTS client
+|                           #  - Kokoro TTS for English (af_heart, 24kHz)
+|                           #  - Piper TTS for Indonesian (id_ID-news_tts-medium)
+|                           #  - Automatic text langdetect + STT language lock
+|                           #  - Dynamic resampling to 24kHz
+|   +-- piper_client.py     # Piper ONNX fallback client (Indonesian TTS engine)
 |
 +-- cognition/
 |   +-- cognitive_gateway.py  # Model-agnostic JSON decision router
@@ -426,8 +427,8 @@ MBG handles everything else automatically:
 | Asset | Size | Purpose | Location |
 |-------|------|---------|---------|
 | faster-whisper-small | ~484 MB | STT model | `~/.cache/huggingface/hub/` |
-| en_US-lessac-medium | ~67 MB | English TTS voice | `models/tts/` |
-| id_ID-news_tts-medium | ~67 MB | Indonesian TTS voice | `models/tts/` |
+| Kokoro-82M | ~300 MB | English TTS model (`af_heart`) | `~/.cache/huggingface/hub/` |
+| id_ID-news_tts-medium | ~67 MB | Indonesian TTS voice (Piper) | `models/tts/` |
 
 LLM models are **user-managed** — download from Hugging Face and place in `models/llm1/` or `models/llm2/`.
 
@@ -506,8 +507,9 @@ stt:
 
 # TTS settings
 tts:
-  voice: "en_US-lessac-medium"
+  voice: "af_heart"        # Default Kokoro voice for English
   speed: 1.0
+  sample_rate: 24000       # Native Kokoro output rate (24kHz)
   lang: "auto"             # Routes by detected text language automatically
 
 # LLM creativity
@@ -613,10 +615,10 @@ The Context Manager injects a strict turn-level language directive:
 - English input → `[Spoken Language: English. You MUST respond in English.]`
 - Indonesian input → `[Spoken Language: Indonesian. You MUST respond in Indonesian.]`
 
-### Level 4: TTS Voice Auto-Matching
+### Level 4: Hybrid TTS Engine Routing
 
-- English text → `en_US-lessac-medium` (native English female voice)
-- Indonesian text → `id_ID-news_tts-medium` (native Indonesian female voice)
+- English text → Kokoro TTS (`hexgrad/Kokoro-82M`, voice: `af_heart`, 24kHz)
+- Indonesian text → Piper TTS (`id_ID-news_tts-medium`, 22.05kHz -> 24kHz resampled)
 
 ---
 
@@ -697,8 +699,8 @@ python main.py memory clear [--yes]
 - Installs Python packages + system dependencies (Vulkan, PortAudio)
 - Builds `llama-server` from source (Linux/macOS) with Vulkan GPU offload
 - Applies `cap_ipc_lock` for zero-swap RAM locking on Linux
-- Downloads `faster-whisper-small` STT model to HuggingFace cache
-- Downloads Piper ONNX TTS voices to `models/tts/`
+- Downloads `faster-whisper-small` STT model and `Kokoro-82M` English TTS model to HuggingFace cache
+- Downloads Piper ONNX Indonesian TTS voice (`id_ID-news_tts-medium`) to `models/tts/`
 - Auto-detects GGUF models and vision projectors
 
 ### Commands

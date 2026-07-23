@@ -752,11 +752,11 @@ def test_tts(
     _setup_logging(settings)
 
     async def _test():
-        from tts.piper_client import PiperTTSClient
+        from tts.kokoro_client import KokoroTTSClient
 
         root = _project_root
         audio_queue: asyncio.Queue = asyncio.Queue()
-        tts = PiperTTSClient(
+        tts = KokoroTTSClient(
             audio_queue=audio_queue,
             voice=settings.tts.voice,
             speed=settings.tts.speed,
@@ -766,7 +766,7 @@ def test_tts(
         )
         ok = await tts.initialize()
         if not ok:
-            console.print("[red]TTS not available. Run: pip install piper-tts[/red]")
+            console.print("[red]TTS not available. Run: pip install kokoro piper-tts[/red]")
             return
 
         console.print(f"[cyan]Synthesizing:[/cyan] {text_input!r}")

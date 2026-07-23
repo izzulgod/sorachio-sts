@@ -102,11 +102,11 @@ class LLMConfig(BaseModel):
 
 
 class TTSConfig(BaseModel):
-    voice: str = "en_US-lessac-medium"   # Piper voice ID
+    voice: str = "af_heart"              # Default Kokoro English voice
     speed: float = 1.0
-    sample_rate: int = 22050             # Piper native output rate
-    lang: str = "auto"                   # "auto" = route by STT language, or pin to "en"/"id"
-    models_dir: str = "models/tts"       # Directory for Piper ONNX models
+    sample_rate: int = 24000             # Kokoro native output rate (24kHz)
+    lang: str = "auto"                   # "auto" = route by STT language / text language
+    models_dir: str = "models/tts"       # Directory for TTS models
 
 
 class STMConfig(BaseModel):

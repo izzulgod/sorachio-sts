@@ -58,7 +58,7 @@ audio:
     provider: "null"           # NullAEC passthrough: preserves full mic dynamic range so user voice triggers interrupt effortlessly
 
   playback:
-    sample_rate: 22050        # Piper native output rate
+    sample_rate: 24000        # Kokoro / Hybrid TTS native output rate (24kHz)
     channels: 1
     dtype: "float32"
     device_index: null        # null = system default
@@ -126,18 +126,17 @@ llm:
   # llama-server binary — platform-correct path (.exe on Windows)
   # is set automatically by settings.py
 
-# =============================================================================
-# TTS Configuration (Piper TTS)
+# TTS Configuration (Kokoro English + Piper Indonesian)
 # =============================================================================
 tts:
-  voice: "en_US-lessac-medium"  # Default Piper voice (English female)
+  voice: "af_heart"             # Default Kokoro voice for English (af_heart, af_bella, am_adam)
   speed: 1.0
-  sample_rate: 22050            # Piper native output rate
-  lang: "auto"                  # "auto" = route by STT language, or pin to "en"/"id"
-  models_dir: "models/tts"      # Directory for Piper ONNX model downloads
+  sample_rate: 24000            # Kokoro native output rate (24kHz)
+  lang: "auto"                  # "auto" = route by STT language / text language
+  models_dir: "models/tts"      # Directory for TTS models
   # Voice routing (auto mode):
-  #   Indonesian → id_ID-indotts-medium (fallback: id_ID-idness-medium)
-  #   English    → en_US-lessac-medium  (fallback: en_US-amy-medium)
+  #   English    → Kokoro TTS (hexgrad/Kokoro-82M, voice: af_heart)
+  #   Indonesian → Piper TTS (id_ID-news_tts-medium)
 
 # =============================================================================
 # Memory Configuration
