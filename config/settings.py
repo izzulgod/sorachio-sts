@@ -164,7 +164,7 @@ class PipelineConfig(BaseModel):
 
 class SystemConfig(BaseModel):
     name: str = "Sorachio"
-    version: str = "0.1.0"
+    version: str = "0.2.0"
     log_level: str = "INFO"
     log_dir: str = "logs"
     data_dir: str = "data"

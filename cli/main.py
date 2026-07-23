@@ -158,7 +158,7 @@ def _setup_logging(settings):
 
 def _print_banner():
     console.print(Panel.fit(
-        "[bold cyan]Sorachio-STS[/bold cyan] [dim]v0.1.0[/dim]\n"
+        "[bold cyan]Sorachio-STS[/bold cyan] [dim]v0.2.0[/dim]\n"
         "[dim]Speech To Speech AI Companion System[/dim]",
         border_style="cyan",
     ))
