@@ -406,9 +406,13 @@ class SorachioPipeline:
             # 3. Drain any stale chunks from previous (interrupted) turn
             self._flush_queues()
 
-            # Vision integration: capture snapshot if requested
+            # Vision integration: capture snapshot if requested with explicit visual intent
             image_b64 = None
-            if decision.get("topic") == "visual_analysis" and self.settings.vision.enabled:
+            is_visual_topic = decision.get("topic") == "visual_analysis"
+            visual_triggers = ("look", "see", "watch", "camera", "picture", "photo", "show", "view", "lihat", "kamera", "foto", "gambar")
+            has_visual_intent = any(w in transcript.lower() for w in visual_triggers)
+
+            if is_visual_topic and has_visual_intent and self.settings.vision.enabled:
                 from vision.capture import capture_frame_base64
                 log.info("[Vision] Capturing snapshot from webcam...")
                 image_b64 = capture_frame_base64(

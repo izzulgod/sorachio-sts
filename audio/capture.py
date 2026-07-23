@@ -166,8 +166,8 @@ class AudioCapture:
             from audio.acoustic_gate import compute_dbfs
             dbfs = compute_dbfs(noise_data.tobytes())
             
-            # Set threshold to 6.0 dB above the background noise floor, clamped to safe ranges
-            calibrated_threshold = max(-50.0, min(-20.0, dbfs + 6.0))
+            # Set threshold to 8.0 dB above the background noise floor, clamped to safe ranges (min -38 dBFS)
+            calibrated_threshold = max(-38.0, min(-20.0, dbfs + 8.0))
             
             self._calibrated_threshold = calibrated_threshold
             self._acoustic_gate.threshold_dbfs = calibrated_threshold
@@ -177,7 +177,7 @@ class AudioCapture:
             )
         except Exception as e:
             log.warning(f"[Capture] Auto-calibration failed, using default: {e}")
-            self._calibrated_threshold = -45.0
+            self._calibrated_threshold = -38.0
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start capture in background threads."""
@@ -255,10 +255,10 @@ class AudioCapture:
 
         # ── Dynamic Acoustic Gate Threshold during TTS Playback ────────────────
         # Tracks speaker output baseline energy in real-time via exponential moving average.
-        # Threshold stays 3.5 dB above the speaker baseline so TTS speaker bleed alone is
+        # Threshold stays 10.0 dB above the speaker baseline so TTS speaker bleed alone is
         # ALWAYS dropped by the Acoustic Gate (never reaches WebRTC VAD → no self-interrupts),
-        # while user voice (+5 dB energy jump above speaker) easily passes the gate.
-        cal_thresh = getattr(self, "_calibrated_threshold", -45.0)
+        # while user voice (+10 dB energy jump above speaker) passes the gate.
+        cal_thresh = getattr(self, "_calibrated_threshold", -38.0)
         from audio.acoustic_gate import compute_dbfs
         dbfs = compute_dbfs(pcm_bytes)
 
@@ -269,7 +269,7 @@ class AudioCapture:
             if not getattr(self, "_in_playback", False):
                 self._in_playback = True
                 self._speaker_baseline_dbfs = max(dbfs, cal_thresh + 10.0)
-                self._playback_preroll_frames = 6  # 6 frames * 30ms = 180ms pre-roll warmup
+                self._playback_preroll_frames = 8  # 8 frames * 30ms = 240ms pre-roll warmup
             else:
                 # Fast attack on peaks, slow decay (0.2 dB per frame) during pauses between words
                 if dbfs > self._speaker_baseline_dbfs:
@@ -277,14 +277,14 @@ class AudioCapture:
                 else:
                     self._speaker_baseline_dbfs = max(cal_thresh + 6.0, self._speaker_baseline_dbfs - 0.2)
 
-            # High-watermark threshold during playback: speaker peak + 7.0 dB (min -20.0 dBFS)
-            # During the pre-roll warmup period, we force threshold very high (-10.0 dBFS)
+            # High-watermark threshold during playback: speaker peak + 10.0 dB (min -12.0 dBFS)
+            # During the pre-roll warmup period, we force threshold very high (-8.0 dBFS)
             # to let baseline stabilize and prevent false startup interrupts.
             if getattr(self, "_playback_preroll_frames", 0) > 0:
                 self._playback_preroll_frames -= 1
-                playback_thresh = -10.0
+                playback_thresh = -8.0
             else:
-                playback_thresh = max(-15.0, self._speaker_baseline_dbfs + 7.0)
+                playback_thresh = max(-12.0, self._speaker_baseline_dbfs + 10.0)
 
             self._acoustic_gate.threshold_dbfs = playback_thresh
         else:
