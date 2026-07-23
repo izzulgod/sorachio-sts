@@ -18,6 +18,7 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from pathlib import Path
 
@@ -120,6 +121,10 @@ class KokoroTTSClient:
     def _load_kokoro(self) -> bool:
         """Load Kokoro pipeline in thread."""
         try:
+            kokoro_models_dir = self.models_dir / "kokoro"
+            kokoro_models_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["HF_HOME"] = str(kokoro_models_dir)
+
             from kokoro import KPipeline
 
             lang_lower = self.lang.lower()

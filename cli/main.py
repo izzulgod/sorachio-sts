@@ -42,6 +42,11 @@ from rich.table import Table
 # ------------------------------------------------------------------
 # Global suppression of unauthenticated HF warnings and PyTorch spam
 # ------------------------------------------------------------------
+_project_root = Path(__file__).parent.parent
+
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = str(_project_root / "models" / "tts" / "kokoro")
+
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -712,6 +717,7 @@ def test_stt(
             timeout_s=stt_cfg.timeout_s,
             device=stt_cfg.device,
             compute_type=stt_cfg.compute_type,
+            models_dir=str(_project_root / stt_cfg.models_dir),
         )
         ok = await stt.initialize()
         if not ok:

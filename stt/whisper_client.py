@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from pathlib import Path
 
 import numpy as np
 
@@ -181,6 +182,7 @@ class WhisperClient:
         timeout_s: float = 10.0,
         device: str = "cpu",
         compute_type: str = "int8",
+        models_dir: str = "models/stt",
     ):
         self.model_size = model_size
         # None or "auto" = auto-detect; otherwise pin to a language
@@ -191,6 +193,7 @@ class WhisperClient:
         self.timeout_s = timeout_s
         self.device = device
         self.compute_type = compute_type
+        self.models_dir = Path(models_dir)
 
         self._model = None
         self._available = False
@@ -224,12 +227,15 @@ class WhisperClient:
         try:
             from faster_whisper import WhisperModel
 
+            self.models_dir.mkdir(parents=True, exist_ok=True)
+
             try:
                 self._model = WhisperModel(
                     self.model_size,
                     device=self.device,
                     compute_type=self.compute_type,
                     cpu_threads=self.threads,
+                    download_root=str(self.models_dir),
                     local_files_only=True,
                 )
             except Exception as offline_err:
@@ -239,6 +245,7 @@ class WhisperClient:
                     device=self.device,
                     compute_type=self.compute_type,
                     cpu_threads=self.threads,
+                    download_root=str(self.models_dir),
                     local_files_only=False,
                 )
 

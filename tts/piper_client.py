@@ -33,10 +33,9 @@ log = get_logger("tts.piper")
 # Voice Configuration
 # ---------------------------------------------------------------------------
 
-# Primary and fallback voice models for each language
+# Primary voice models for Indonesian (English is handled by Kokoro TTS)
 _VOICE_MAP: dict[str, list[str]] = {
     "id": ["id_ID-news_tts-medium"],
-    "en": ["en_US-lessac-medium", "en_US-amy-medium"],
 }
 
 # Hugging Face base URL for piper voice downloads
@@ -51,19 +50,19 @@ def _voice_download_url(voice_name: str) -> tuple[str, str]:
 
     Piper voices follow the naming convention:
         {lang_code}/{lang_country}/{voice}/{quality}/{voice}.onnx
-    e.g. en/en_US/lessac/medium/en_US-lessac-medium.onnx
+    e.g. id/id_ID/news_tts/medium/id_ID-news_tts-medium.onnx
 
     Returns (onnx_url, json_url).
     """
-    # Parse voice name: "en_US-lessac-medium" → lang="en", country_lang="en_US", name="lessac", quality="medium"
+    # Parse voice name: "id_ID-news_tts-medium" → lang="id", country_lang="id_ID", name="news_tts", quality="medium"
     parts = voice_name.split("-")
     if len(parts) != 3:
         raise ValueError(f"Invalid piper voice name format: {voice_name}")
 
-    country_lang = parts[0]   # e.g. "en_US" or "id_ID"
-    name = parts[1]           # e.g. "lessac" or "indotts"
+    country_lang = parts[0]   # e.g. "id_ID"
+    name = parts[1]           # e.g. "news_tts"
     quality = parts[2]        # e.g. "medium"
-    lang = country_lang.split("_")[0]  # e.g. "en" or "id"
+    lang = country_lang.split("_")[0]  # e.g. "id"
 
     base = f"{_HF_PIPER_VOICES_URL}/{lang}/{country_lang}/{name}/{quality}"
     onnx_url = f"{base}/{voice_name}.onnx"
@@ -84,14 +83,13 @@ class PiperTTSClient:
     (to avoid blocking the event loop) and the audio is placed
     in the audio playback queue for immediate playback.
 
-    Supports bilingual voice routing between Indonesian and English
-    female voices based on STT-detected language.
+    Provides Indonesian voice synthesis using Piper TTS.
     """
 
     def __init__(
         self,
         audio_queue: asyncio.Queue,
-        voice: str = "en_US-lessac-medium",
+        voice: str = "id_ID-news_tts-medium",
         speed: float = 1.0,
         lang: str = "auto",
         sample_rate: int = 22050,
@@ -106,7 +104,7 @@ class PiperTTSClient:
 
         self._voices: dict[str, object] = {}  # lang_code → loaded PiperVoice
         self._voice_names: dict[str, str] = {}  # lang_code → voice file stem
-        self._current_lang: str = "en"
+        self._current_lang: str = "id"
         self._available = False
 
         # Language detection accumulator — collects chunks from a single

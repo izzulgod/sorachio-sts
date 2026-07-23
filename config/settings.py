@@ -65,6 +65,7 @@ class STTConfig(BaseModel):
     timeout_s: float = 15.0
     device: str = "cpu"               # "cpu" or "cuda"
     compute_type: str = "int8"        # "int8", "float16", "float32"
+    models_dir: str = "models/stt"    # Directory for STT models
 
 
 class LLMInstanceConfig(BaseModel):
