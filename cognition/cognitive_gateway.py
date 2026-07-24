@@ -57,22 +57,25 @@ Schema: {"respond": boolean, "topic": string, "emotion": string,
 "store_memory": boolean, "importance": float, "memory_queries": list}
 
 Rules:
-- respond=false: background noise, other people talking, filler words (um, wait, hmm).
-- respond=true: greetings, questions, commands, or direct speech addressed to you.
-- topic: short label (e.g. greeting, focus, origin, general).
-  Use "visual_analysis" if user asks to look/see/watch something.
-- topic: short label (e.g. greeting, focus, origin, audio_check, general). Use "visual_analysis" ONLY if user explicitly asks to look at, see, or show something with the camera (e.g. "look at this", "what is this", "can you see me").
-- IMPORTANT: Questions about hearing, listening, or microphone ("Can you hear me?", "Is my mic working?", "Dengar suara saya?") MUST be "audio_check" or "general", NOT "visual_analysis".
+- respond=false: background noise, filler words (um, wait, hmm).
+- respond=true: greetings, questions, commands, direct speech to you.
+- topic: short label (greeting, focus, origin, audio_check, general).
+  Use "visual_analysis" ONLY if user explicitly asks to look/see/watch
+  something with camera (e.g. "look at this", "what is this").
+- IMPORTANT: Questions about hearing/listening/mic
+  ("Can you hear me?", "Dengar suara saya?") MUST be "audio_check"
+  or "general", NOT "visual_analysis".
 - emotion: neutral|happy|sad|anxious|frustrated|excited|confused|tired
 - store_memory=true ONLY for important personal facts, preferences,
-  goals about the USER. False for small talk, greetings, questions about Sorachio.
+  goals about the USER. False for small talk/greetings.
 - importance: 0.0–1.0
 - memory_queries: up to 2 search keywords, empty list if not needed.
 
 Examples:
 "Hey, stressed about exams."
 → {"respond":true,"topic":"exams","emotion":"anxious",
-   "store_memory":true,"importance":0.8,"memory_queries":["exams","stress"]}
+   "store_memory":true,"importance":0.8,
+   "memory_queries":["exams","stress"]}
 "Hey Mom, turn off the TV."
 → {"respond":false,"topic":"general","emotion":"neutral",
    "store_memory":false,"importance":0.1,"memory_queries":[]}
@@ -85,12 +88,6 @@ Examples:
 "Umm... wait..."
 → {"respond":false,"topic":"general","emotion":"neutral",
    "store_memory":false,"importance":0.1,"memory_queries":[]}
-"Hey, stressed about exams." → {"respond":true,"topic":"exams","emotion":"anxious","store_memory":true,"importance":0.8,"memory_queries":["exams","stress"]}
-"Can you hear me?" → {"respond":true,"topic":"audio_check","emotion":"curious","store_memory":false,"importance":0.2,"memory_queries":[]}
-"Hey Mom, turn off the TV." → {"respond":false,"topic":"general","emotion":"neutral","store_memory":false,"importance":0.1,"memory_queries":[]}
-"Who made you?" → {"respond":true,"topic":"origin","emotion":"neutral","store_memory":false,"importance":0.2,"memory_queries":[]}
-"Look at this, what is it?" → {"respond":true,"topic":"visual_analysis","emotion":"curious","store_memory":false,"importance":0.5,"memory_queries":[]}
-"Umm... wait..." → {"respond":false,"topic":"general","emotion":"neutral","store_memory":false,"importance":0.1,"memory_queries":[]}
 
 Output ONLY valid JSON."""
 

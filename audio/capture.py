@@ -164,10 +164,10 @@ class AudioCapture:
             # Calculate average dBFS of the noise snippet
             from audio.acoustic_gate import compute_dbfs
             dbfs = compute_dbfs(noise_data.tobytes())
-            
+
             # Set threshold to 8.0 dB above the background noise floor, clamped to safe ranges (min -38 dBFS)
             calibrated_threshold = max(-38.0, min(-20.0, dbfs + 8.0))
-            
+
             self._calibrated_threshold = calibrated_threshold
             self._acoustic_gate.threshold_dbfs = calibrated_threshold
             log.info(
@@ -299,7 +299,12 @@ class AudioCapture:
 
         if gate_result != self._gate_passed_last:
             self._gate_passed_last = gate_result
-            _log_event(f"Acoustic gate state changed: passed={gate_result} (dBFS={dbfs:.2f}, thresh={self._acoustic_gate.threshold_dbfs:.1f})", force=True)
+            thresh = self._acoustic_gate.threshold_dbfs
+            _log_event(
+                f"Acoustic gate state changed: passed={gate_result} "
+                f"(dBFS={dbfs:.2f}, thresh={thresh:.1f})",
+                force=True,
+            )
 
         if not gate_result:
             # Enqueue a sentinel (empty bytes) so the VAD worker knows time passed.

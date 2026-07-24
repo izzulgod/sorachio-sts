@@ -512,7 +512,7 @@ class WhisperClient:
                         target_lang = "id"
                     else:
                         target_lang = "en"
-                        
+
                     log.info(f"[STT] Language route → {target_lang}")
                 except Exception as detect_err:
                     log.warning(f"[STT] Language detection failed: {detect_err}")
@@ -522,18 +522,25 @@ class WhisperClient:
 
             self._last_detected_language = target_lang
 
+            # Audio is pre-filtered by capture.py VAD; disabling secondary VAD
+            # speeds up transcription by ~1s
+            init_prompt = (
+                "Sorachio is an AI companion created by izzulgod. "
+                "Conversation in English and Indonesian."
+            )
             segments_gen, info = self._model.transcribe(
                 audio,
                 language=target_lang,
                 beam_size=self.beam_size,
                 temperature=self.temperature,
-                vad_filter=False,  # Audio is pre-filtered by capture.py VAD; disabling secondary VAD speeds up transcription by 1s
-                initial_prompt="Sorachio is an AI companion created by izzulgod. Conversation in English and Indonesian.",
+                vad_filter=False,
+                initial_prompt=init_prompt,
                 # Prevent repetition loops (hallucinations)
-                compression_ratio_threshold=2.0,   # Strict limit on highly repetitive text
+                compression_ratio_threshold=2.0,
                 log_prob_threshold=-1.0,
                 no_speech_threshold=0.6,
-                condition_on_previous_text=False,  # DO NOT carry over context/loops from previous turns
+                # DO NOT carry over context/loops from previous turns
+                condition_on_previous_text=False,
             )
 
             # CRITICAL: consume the lazy generator immediately.

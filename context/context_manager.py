@@ -126,7 +126,11 @@ class ContextManager:
         # Explicit spoken language directive for LLM2
         detected_lang = cognitive_decision.get("detected_language") or cognitive_decision.get("language")
         if not detected_lang:
-            id_keywords = {"saya", "aku", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih", "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "perkenalkan"}
+            id_keywords = {
+                "saya", "aku", "kamu", "dengan", "senang", "halo", "nama",
+                "terima", "kasih", "apa", "bisa", "ini", "itu", "yang",
+                "dan", "untuk", "ada", "perkenalkan",
+            }
             import re
             words = set(re.findall(r'\b\w+\b', user_input.lower()))
             detected_lang = "id" if len(words.intersection(id_keywords)) >= 1 else "en"

@@ -36,7 +36,8 @@ def _resample_audio(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarr
         return audio
     num_samples = int(round(len(audio) * target_sr / orig_sr))
     indices = np.linspace(0, len(audio) - 1, num_samples)
-    return np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+    result: np.ndarray = np.interp(indices, np.arange(len(audio)), audio)
+    return result.astype(np.float32)
 
 
 # ---------------------------------------------------------------------------

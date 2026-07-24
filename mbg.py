@@ -795,10 +795,10 @@ class MasterBootstrapGuardian:
             yaml_path = PROJECT_ROOT / "config" / "sorachio.yaml"
             if yaml_path.exists():
                 import yaml
-                with open(yaml_path, "r", encoding="utf-8") as f:
+                with open(yaml_path, encoding="utf-8") as f:
                     cfg_data = yaml.safe_load(f)
                     stt_model_name = cfg_data.get("stt", {}).get("model_size", "small")
-            
+
             stt_dir = MODELS_DIR / "stt"
             stt_dir.mkdir(parents=True, exist_ok=True)
 

@@ -43,6 +43,7 @@ def capture_frame_base64(device_index: int = 0, max_size: int = 512) -> str | No
 
         # Resize the frame to save tokens and processing time
         h, w = frame.shape[:2]
+        new_w, new_h = w, h
         if max(h, w) > max_size:
             scale = max_size / max(h, w)
             new_w, new_h = int(w * scale), int(h * scale)

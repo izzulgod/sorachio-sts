@@ -422,7 +422,6 @@ class SorachioPipeline:
             self._capture.mute()
 
             # Temporarily disable interruption callback so the greeting does not interrupt itself
-            old_interrupt_callback = self._capture.interrupt_callback
             self._capture.interrupt_callback = None
 
             greeting_done = asyncio.Event()
@@ -591,7 +590,10 @@ class SorachioPipeline:
             # Vision integration: capture snapshot if requested with explicit visual intent
             image_b64 = None
             is_visual_topic = decision.get("topic") == "visual_analysis"
-            visual_triggers = ("look", "see", "watch", "camera", "picture", "photo", "show", "view", "lihat", "kamera", "foto", "gambar")
+            visual_triggers = (
+                "look", "see", "watch", "camera", "picture", "photo",
+                "show", "view", "lihat", "kamera", "foto", "gambar",
+            )
             has_visual_intent = any(w in transcript.lower() for w in visual_triggers)
 
             if is_visual_topic and has_visual_intent and self.settings.vision.enabled:
