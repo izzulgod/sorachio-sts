@@ -1,10 +1,10 @@
 """
 Sorachio-STS Long-Term Memory (LTM)
-JSON-backed persistent memory with keyword retrieval and importance scoring.
+JSON-backed persistent memory with vector similarity search and importance scoring.
 
 Storage format: data/memory/ltm.json
+Vector store: data/memory/chroma/ (ChromaDB)
 
-Designed for future vector DB migration (ChromaDB, FAISS, etc.)
 Each memory entry has:
   - id, content, topic, emotion
   - importance (0.0–1.0)
@@ -25,6 +25,7 @@ from typing import Any
 
 import aiofiles
 
+from memory.vector_store import VectorStore
 from utils.logging_setup import get_logger
 
 log = get_logger("memory.ltm")
@@ -125,14 +126,14 @@ class LTMEntry:
 
 class LongTermMemory:
     """
-    JSON-backed persistent long-term memory.
+    JSON-backed persistent long-term memory with vector similarity search.
 
     Features:
       - Store memories with importance scoring
-      - Keyword-based retrieval
+      - Vector similarity search (ChromaDB) for semantic retrieval
+      - Keyword-based fallback if vector store unavailable
       - Persistence across sessions
       - Access tracking
-      - Future vector DB compatibility
     """
 
     def __init__(
@@ -141,6 +142,8 @@ class LongTermMemory:
         max_entries: int = 500,
         importance_threshold: float = 0.5,
         retrieval_top_k: int = 5,
+        vector_store: VectorStore | None = None,
+        vector_weight: float = 0.7,
     ):
         self.storage_path = Path(storage_path)
         self.max_entries = max_entries
@@ -149,12 +152,41 @@ class LongTermMemory:
         self._entries: list[LTMEntry] = []
         self._lock = asyncio.Lock()
         self._dirty = False
+        self._vector_store = vector_store
+        self._vector_weight = vector_weight
 
     async def initialize(self) -> None:
-        """Load existing memories from disk."""
+        """Load existing memories from disk and sync to vector store."""
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         await self._load()
         log.info(f"[LTM] Loaded {len(self._entries)} memories from {self.storage_path}")
+
+        # Sync existing entries to vector store
+        if self._vector_store and self._vector_store.available:
+            await self._sync_to_vector_store()
+
+    async def _sync_to_vector_store(self) -> None:
+        """Sync all entries to vector store for semantic search."""
+        if not self._vector_store:
+            return
+
+        log.info("[LTM] Syncing memories to vector store...")
+        synced = 0
+        for entry in self._entries:
+            metadata = {
+                "topic": entry.topic,
+                "emotion": entry.emotion,
+                "importance": str(entry.importance),
+                "created_at": entry.created_at,
+            }
+            ok = await self._vector_store.add(
+                entry_id=entry.id,
+                content=entry.content,
+                metadata=metadata,
+            )
+            if ok:
+                synced += 1
+        log.info(f"[LTM] Synced {synced}/{len(self._entries)} entries to vector store")
 
     async def store(
         self,
@@ -199,6 +231,21 @@ class LongTermMemory:
             self._dirty = True
 
         await self._save()
+
+        # Add to vector store
+        if self._vector_store and self._vector_store.available:
+            vector_metadata = {
+                "topic": topic,
+                "emotion": emotion,
+                "importance": str(importance),
+                "created_at": entry.created_at,
+            }
+            await self._vector_store.add(
+                entry_id=entry.id,
+                content=content,
+                metadata=vector_metadata,
+            )
+
         log.info(f"[LTM] Stored [{entry.id}] topic={topic} importance={importance:.2f}: {content[:60]!r}")
         return entry
 
@@ -209,10 +256,36 @@ class LongTermMemory:
     ) -> list[LTMEntry]:
         """
         Retrieve top-K most relevant memories for given query keywords.
+        Uses vector similarity search when available, falls back to keyword matching.
         """
         k = top_k or self.retrieval_top_k
+
+        # Try vector search first
+        if self._vector_store and self._vector_store.available and queries:
+            query_text = " ".join(queries)
+            vector_results = await self._vector_store.query(
+                query_text=query_text,
+                n_results=k,
+            )
+
+            if vector_results:
+                # Map vector results back to LTM entries
+                entry_map = {e.id: e for e in self._entries}
+                results = []
+                for vr in vector_results:
+                    entry = entry_map.get(vr["id"])
+                    if entry:
+                        # Update access tracking
+                        entry.accessed_at = datetime.now().isoformat()
+                        entry.access_count += 1
+                        results.append(entry)
+
+                if results:
+                    log.debug(f"[LTM] Vector search returned {len(results)} results")
+                    return results
+
+        # Fallback to keyword matching
         if not queries:
-            # Return most important recent memories
             async with self._lock:
                 sorted_entries = sorted(
                     self._entries,
@@ -242,7 +315,7 @@ class LongTermMemory:
         if results:
             await self._save()
 
-        log.debug(f"[LTM] Retrieved {len(results)} memories for queries: {queries}")
+        log.debug(f"[LTM] Keyword search returned {len(results)} memories for queries: {queries}")
         return results
 
     def format_for_context(self, entries: list[LTMEntry]) -> str:

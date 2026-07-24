@@ -18,6 +18,7 @@ fix = true
 # Line length
 line-length = 120
 
+[tool.ruff.lint]
 # Select rules
 select = [
     "E",   # pycodestyle errors

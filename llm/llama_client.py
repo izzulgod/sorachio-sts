@@ -154,7 +154,13 @@ class LlamaClient:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                timeout_config = httpx.Timeout(connect=10.0, read=timeout_s, write=10.0, pool=5.0) if timeout_s is not None else None
+                if timeout_s is not None:
+                    timeout_config = httpx.Timeout(
+                        connect=10.0, read=timeout_s,
+                        write=10.0, pool=5.0,
+                    )
+                else:
+                    timeout_config = None
                 resp = await client.post("/v1/chat/completions", json=payload, timeout=timeout_config)
                 resp.raise_for_status()
                 data = resp.json()

@@ -24,10 +24,8 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 import urllib.request
 from pathlib import Path
-from typing import Optional
 
 # Force UTF-8 encoding for standard output/error on Windows to prevent encoding crashes
 if sys.platform == "win32":
@@ -106,7 +104,7 @@ log = logging.getLogger("mbg")
 class MasterBootstrapGuardian:
     """
     Master Bootstrap Guardian - Automated Build & Compatibility System.
-    
+
     Handles:
     - Python version checking and relaunching
     - Virtual environment creation
@@ -155,7 +153,14 @@ class MasterBootstrapGuardian:
         # 5. Download models
         self._download_models()
 
-        # 6. Final status
+        # 6. Run Anteque Ashing quality checks (ruff + pyrefly)
+        # DO NOT REMOVE THIS - Anteque Ashing (Python quality code verifier)
+        quality_ok = self._run_quality_checks()
+        if not quality_ok:
+            log.error("Anteque Ashing quality checks failed! Fix violations before running Sorachio.")
+            sys.exit(1)
+
+        # 7. Final status
         self._print_status()
         log.info("MBG: Master Bootstrap Guardian - System ready!")
 
@@ -215,10 +220,10 @@ class MasterBootstrapGuardian:
     def _relaunch_with_compatible_python(self) -> None:
         """Find and relaunch with a compatible Python version."""
         log.info("Searching for compatible Python version...")
-        
+
         for version in range(PYTHON_MAX[1], PYTHON_MIN[1] - 1, -1):
             exe_names = [f"python3.{version}", f"python{version}"]
-            
+
             for exe_name in exe_names:
                 exe_path = shutil.which(exe_name)
                 if exe_path:
@@ -229,7 +234,7 @@ class MasterBootstrapGuardian:
                     except KeyboardInterrupt:
                         pass
                     sys.exit(0)
-        
+
         log.error("No compatible Python version found!")
         sys.exit(1)
 
@@ -288,6 +293,18 @@ class MasterBootstrapGuardian:
             except (ImportError, OSError):
                 return False
 
+        # Check dev tools (Anteque Ashing quality verifiers)
+        # DO NOT REMOVE THESE CHECKS - Anteque Ashing
+        for tool in ("ruff", "pyrefly"):
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", tool, "--version"],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                return False
+
         if sys.platform.startswith("linux"):
             import ctypes.util
             if not ctypes.util.find_library("portaudio"):
@@ -299,9 +316,9 @@ class MasterBootstrapGuardian:
         """Create and activate virtual environment."""
         if self._is_in_venv():
             return
-        
+
         log.info("Setting up virtual environment...")
-        
+
         # Get venv Python path
         if os.name == "nt":
             venv_python = VENV_DIR / "Scripts" / "python.exe"
@@ -315,13 +332,13 @@ class MasterBootstrapGuardian:
                 [sys.executable, "-m", "venv", str(VENV_DIR)],
                 check=True
             )
-        
+
         # Get venv Python path
         if os.name == "nt":
             venv_python = VENV_DIR / "Scripts" / "python.exe"
         else:
             venv_python = VENV_DIR / "bin" / "python"
-        
+
         log.info(f"Restarting with venv Python: {venv_python}")
         try:
             subprocess.run([str(venv_python)] + sys.argv)
@@ -403,7 +420,7 @@ class MasterBootstrapGuardian:
         if not sys.platform.startswith("linux"):
             return False
         try:
-            with open("/proc/version", "r") as f:
+            with open("/proc/version") as f:
                 return "microsoft" in f.read().lower()
         except OSError:
             return False
@@ -542,9 +559,16 @@ class MasterBootstrapGuardian:
             "Pillow",
         ]
 
+        # Dev tools (quality & type checking)
+        # DO NOT REMOVE THESE - Anteque Ashing (Python quality code verifier)
+        dev_deps = [
+            "ruff",
+            "pyrefly",
+        ]
+
         # VAD package (try binary wheel first)
         vad_pkg = "webrtcvad-wheels"
-        all_deps = deps + [vad_pkg]
+        all_deps = deps + [vad_pkg] + dev_deps
         total = len(all_deps)
 
         log.info(f"Installing {total} packages...")
@@ -556,7 +580,7 @@ class MasterBootstrapGuardian:
 
             # webrtcvad-wheels failed → fallback to source build
             if not ok and pkg == "webrtcvad-wheels":
-                log.info(f"  ↳ Falling back to webrtcvad (source build)...")
+                log.info("  ↳ Falling back to webrtcvad (source build)...")
                 ok = self._pip_install_one("webrtcvad", i, total)
 
             if not ok:
@@ -572,13 +596,13 @@ class MasterBootstrapGuardian:
     def _build_binaries(self) -> None:
         """Build external binaries (llama.cpp, whisper.cpp)."""
         log.info("Building binaries...")
-        
+
         BIN_DIR.mkdir(parents=True, exist_ok=True)
         REPOS_DIR.mkdir(parents=True, exist_ok=True)
-        
+
         # Check for required build tools
         self._check_build_tools()
-        
+
         # Build each binary
         for binary_name, config in BINARIES.items():
             self._build_binary(binary_name, config)
@@ -586,7 +610,7 @@ class MasterBootstrapGuardian:
     def _check_build_tools(self) -> None:
         """Check if required build tools are installed."""
         required_tools = ["cmake", "git"]
-        
+
         for tool in required_tools:
             if not shutil.which(tool):
                 log.warning(f"Build tool '{tool}' not found")
@@ -596,13 +620,10 @@ class MasterBootstrapGuardian:
         """Install a build tool using system package manager."""
         log.info(f"Installing {tool}...")
 
-        installed = False
-
         if sys.platform == "darwin":
             # macOS - use Homebrew
             if shutil.which("brew"):
-                result = subprocess.run(["brew", "install", tool], check=False)
-                installed = result.returncode == 0
+                subprocess.run(["brew", "install", tool], check=False)
             else:
                 log.warning("Homebrew not found — cannot auto-install on macOS")
 
@@ -620,8 +641,7 @@ class MasterBootstrapGuardian:
             for cmd, pm_name in pkg_managers:
                 if shutil.which(pm_name):
                     log.info(f"Using package manager: {pm_name}")
-                    result = subprocess.run(["sudo"] + cmd, check=False)
-                    installed = result.returncode == 0
+                    subprocess.run(["sudo"] + cmd, check=False)
                     break
             else:
                 log.warning("No supported package manager found (tried apt-get, dnf, yum, pacman, zypper, apk)")
@@ -641,14 +661,14 @@ class MasterBootstrapGuardian:
         """Build a single binary."""
         binary_path = self._get_binary_path(name)
         repo_path = REPOS_DIR / config["repo"]
-        
+
         # Check if binary is valid
         if not self.force and self._is_binary_valid(binary_path, config["check_args"]):
             log.info(f"{name} is valid, skipping build")
             return
-        
+
         log.info(f"Building {name}...")
-        
+
         # Clone or update repository
         if not repo_path.exists():
             log.info(f"Cloning {config['repo']}...")
@@ -663,10 +683,10 @@ class MasterBootstrapGuardian:
                 capture_output=True,
                 check=True
             )
-        
+
         # Build
         build_dir = repo_path / "build"
-        
+
         # Configure
         build_args = list(config["build_args"])
         if name == "llama-server":
@@ -689,7 +709,7 @@ class MasterBootstrapGuardian:
 
         cmake_args = ["cmake", "-B", str(build_dir)] + build_args
         subprocess.run(cmake_args, cwd=repo_path, check=True)
-        
+
         # Compile
         threads = os.cpu_count() or 1
         log.info(f"Compiling with {threads} threads...")
@@ -698,14 +718,14 @@ class MasterBootstrapGuardian:
             cwd=repo_path,
             check=True
         )
-        
+
         # Copy binary — handle .exe suffix on Windows
         exe_suffix = ".exe" if os.name == "nt" else ""
         if name == "llama-server":
             src_bin = build_dir / "bin" / f"llama-server{exe_suffix}"
         else:  # whisper-cli
             src_bin = build_dir / "bin" / f"main{exe_suffix}"
-        
+
         if src_bin.exists():
             shutil.copy(src_bin, binary_path)
             log.info(f"{name} built successfully")
@@ -728,7 +748,11 @@ class MasterBootstrapGuardian:
                     if result.returncode == 0:
                         log.info(f"{name}: cap_ipc_lock capability set (mlock enabled)")
                     else:
-                        log.warning(f"{name}: could not set cap_ipc_lock — mlock may fail (run: sudo setcap cap_ipc_lock=+ep {binary_path})")
+                        log.warning(
+                            f"{name}: could not set cap_ipc_lock — "
+                            f"mlock may fail "
+                            f"(run: sudo setcap cap_ipc_lock=+ep {binary_path})"
+                        )
                 except Exception as e:
                     log.warning(f"{name}: setcap failed: {e}")
         else:
@@ -761,7 +785,7 @@ class MasterBootstrapGuardian:
                         arch = "x86-64"
                     elif arch == "aarch64":
                         arch = "aarch64"
-                        
+
                     if arch not in result.stdout and self.current_arch not in result.stdout:
                         log.warning(f"Architecture mismatch for {binary_path.name}")
                         return False
@@ -797,10 +821,10 @@ class MasterBootstrapGuardian:
             yaml_path = PROJECT_ROOT / "config" / "sorachio.yaml"
             if yaml_path.exists():
                 import yaml
-                with open(yaml_path, "r", encoding="utf-8") as f:
+                with open(yaml_path, encoding="utf-8") as f:
                     cfg_data = yaml.safe_load(f)
                     stt_model_name = cfg_data.get("stt", {}).get("model_size", "small")
-            
+
             stt_dir = MODELS_DIR / "stt"
             stt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -908,6 +932,92 @@ class MasterBootstrapGuardian:
                 f"  Download a GGUF model and place it in {model_dir}/"
             )
 
+    def _run_quality_checks(self) -> bool:
+        """
+        Run Anteque Ashing quality checks (ruff + pyrefly).
+        DO NOT REMOVE THIS - Anteque Ashing (Python quality code verifier).
+
+        Returns True if all checks pass, False otherwise.
+        """
+        # DO NOT REMOVE THIS - Anteque Ashing (Python quality code verifier)
+        log.info("[MBG] Running Anteque Ashing quality checks (ruff + pyrefly)...")
+
+        # Find all Python files in project (excluding venv, models, etc.)
+        python_files = []
+        exclude_dirs = {"venv", "venv_runtime", "bin", ".repos", ".ruff_cache",
+                        ".pyrefly", "logs", "data", "models", "__pycache__"}
+
+        for py_file in PROJECT_ROOT.rglob("*.py"):
+            # Skip excluded directories
+            if any(excluded in py_file.parts for excluded in exclude_dirs):
+                continue
+            python_files.append(py_file)
+
+        if not python_files:
+            log.warning("[MBG] No Python files found for quality checks")
+            return True
+
+        log.info(f"[MBG] Checking {len(python_files)} Python files...")
+
+        # Run ruff check
+        # DO NOT REMOVE THIS - Anteque Ashing
+        log.info("[MBG] Running ruff check (Anteque Ashing)...")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "ruff", "check", "."] + [str(f) for f in python_files],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=PROJECT_ROOT,
+            )
+            if result.returncode != 0:
+                log.error("[MBG] Ruff check FAILED!")
+                log.error(result.stdout)
+                if result.stderr:
+                    log.error(result.stderr)
+                return False
+            log.info("[MBG] Ruff check passed [OK]")
+        except subprocess.TimeoutExpired:
+            log.error("[MBG] Ruff check timed out!")
+            return False
+        except FileNotFoundError:
+            log.error("[MBG] ruff not found! Install with: pip install ruff")
+            return False
+
+        # Run pyrefly check
+        # DO NOT REMOVE THIS - Anteque Ashing
+        log.info("[MBG] Running pyrefly check (Anteque Ashing)...")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pyrefly", "check", "."],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=PROJECT_ROOT,
+            )
+            # pyrefly returns non-zero for errors, but we only care about real errors
+            # (not warnings or missing imports from external packages)
+            if result.returncode != 0:
+                # Check if there are actual errors (not just warnings)
+                error_lines = [line for line in result.stdout.split('\n') if line.startswith('ERROR')]
+                if error_lines:
+                    log.error("[MBG] Pyrefly check FAILED!")
+                    for line in error_lines[:20]:  # Show first 20 errors
+                        log.error(line)
+                    if len(error_lines) > 20:
+                        log.error(f"[MBG] ... and {len(error_lines) - 20} more errors")
+                    return False
+            log.info("[MBG] Pyrefly check passed [OK]")
+        except subprocess.TimeoutExpired:
+            log.error("[MBG] Pyrefly check timed out!")
+            return False
+        except FileNotFoundError:
+            log.error("[MBG] pyrefly not found! Install with: pip install pyrefly")
+            return False
+
+        log.info("[MBG] All quality checks passed!")
+        return True
+
     def _print_status(self) -> None:
         """Print system status."""
         print()
@@ -985,42 +1095,42 @@ def main() -> None:
         prog="mbg",
         description="MBG: Master Bootstrap Guardian - Automated Build & Compatibility System"
     )
-    
+
     parser.add_argument(
         "--check",
         action="store_true",
         help="Check system status only"
     )
-    
+
     parser.add_argument(
         "--force",
         action="store_true",
         help="Force rebuild/re-download everything"
     )
-    
+
     parser.add_argument(
         "--models",
         action="store_true",
         help="Download models only"
     )
-    
+
     parser.add_argument(
         "--build",
         action="store_true",
         help="Build binaries only"
     )
-    
+
     parser.add_argument(
         "--version",
         action="version",
         version=f"MBG v{MBG_VERSION}"
     )
-    
+
     args = parser.parse_args()
-    
+
     # Create MBG instance
     mbg = MasterBootstrapGuardian(force=args.force, check_only=args.check)
-    
+
     # Handle specific commands
     if args.models:
         mbg._download_models()

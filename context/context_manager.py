@@ -8,6 +8,7 @@ Merges:
   3. Short-term conversation history (rolling window)
   4. Current emotional state
   5. Current user input
+  6. Emotion adaptation signals
 
 This produces a rich, context-aware prompt for natural conversation.
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from memory.emotion_tracker import EmotionTracker
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
 from utils.logging_setup import get_logger
@@ -41,6 +43,7 @@ class ContextManager:
         max_stm_in_prompt: int = 10,
         max_ltm_in_prompt: int = 3,
         include_emotional_state: bool = True,
+        emotion_tracker: EmotionTracker | None = None,
     ):
         self.stm = stm
         self.ltm = ltm
@@ -49,6 +52,7 @@ class ContextManager:
         self.max_stm_in_prompt = max_stm_in_prompt
         self.max_ltm_in_prompt = max_ltm_in_prompt
         self.include_emotional_state = include_emotional_state
+        self._emotion_tracker = emotion_tracker
 
     async def build_prompt(
         self,
@@ -92,8 +96,19 @@ class ContextManager:
         context_parts = []
         if self.include_emotional_state and emotion != "neutral":
             context_parts.append(
-                f"[Current emotional context: The user seems {emotion}. Respond with appropriate empathy and care.]"
+                f"[Current emotional context: The user seems {emotion}. "
+                f"Respond with appropriate empathy and care.]"
             )
+
+        # Add emotion adaptation signals from tracker
+        if self._emotion_tracker:
+            adaptation = self._emotion_tracker.get_personality_adaptation()
+            if adaptation.get("user_mood") != "neutral":
+                context_parts.append(
+                    f"[Personality adaptation: Use {adaptation['tone_suggestion']} tone. "
+                    f"Energy level: {adaptation['energy_level']}. "
+                    f"Empathy level: {adaptation['empathy_level']}.]"
+                )
         if topic and topic not in ("general", "unknown"):
             context_parts.append(
                 f"[Current topic: {topic}]"
@@ -104,13 +119,18 @@ class ContextManager:
                 context_parts.append(ltm_text.strip())
         if was_interrupted:
             context_parts.append(
-                "[Context: Your previous response was interrupted by the user. Acknowledge the interruption if natural, and keep your next response brief.]"
+                "[Context: Your previous response was interrupted by the user. "
+                "Acknowledge the interruption if natural, and keep your next response brief.]"
             )
 
         # Explicit spoken language directive for LLM2
         detected_lang = cognitive_decision.get("detected_language") or cognitive_decision.get("language")
         if not detected_lang:
-            id_keywords = {"saya", "aku", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih", "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "perkenalkan"}
+            id_keywords = {
+                "saya", "aku", "kamu", "dengan", "senang", "halo", "nama",
+                "terima", "kasih", "apa", "bisa", "ini", "itu", "yang",
+                "dan", "untuk", "ada", "perkenalkan",
+            }
             import re
             words = set(re.findall(r'\b\w+\b', user_input.lower()))
             detected_lang = "id" if len(words.intersection(id_keywords)) >= 1 else "en"
@@ -169,6 +189,26 @@ class ContextManager:
         topic = cognitive_decision.get("topic", "general")
         importance = cognitive_decision.get("importance", 0.3)
         store_memory = cognitive_decision.get("store_memory", False)
+
+        # Record emotion in tracker
+        if self._emotion_tracker:
+            self._emotion_tracker.record_emotion(
+                emotion=emotion,
+                topic=topic,
+                importance=importance,
+            )
+
+            # Store emotion summary in LTM periodically
+            if self._emotion_tracker.should_summarize():
+                summary = self._emotion_tracker.generate_summary()
+                if summary:
+                    await self.ltm.store(
+                        content=f"Emotional pattern: {summary}",
+                        topic="emotion_pattern",
+                        emotion=emotion,
+                        importance=0.4,
+                        metadata={"type": "emotion_summary"},
+                    )
 
         # Always add to STM
         await self.stm.add(

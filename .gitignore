@@ -81,3 +81,7 @@ logs/*
 *.swp
 .gemini/
 .agents/
+
+# OpenCode / TaskManager
+.opencode/
+.tmp/

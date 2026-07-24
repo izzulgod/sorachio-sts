@@ -36,10 +36,16 @@ class AudioCaptureConfig(BaseModel):
 
 
 class EchoCancellationConfig(BaseModel):
-    """AEC scaffold configuration."""
+    """AEC configuration."""
     enabled: bool = False
-    provider: str = "null"            # "null" | "simple_energy"
-    attenuation_factor: float = 0.3   # Used by simple_energy only
+    provider: str = "null"            # "null" | "simple_energy" | "calibration"
+    attenuation_factor: float = 0.3   # Used by simple_energy
+    # Calibration AEC settings
+    calibration_duration_s: float = 3.0  # Duration of calibration chirp
+    calibration_auto_run: bool = True    # Auto-calibrate on startup
+    lms_filter_length: int = 256         # LMS adaptive filter taps
+    lms_step_size: float = 0.01          # LMS learning rate
+    wiener_noise_margin: float = 6.0     # Wiener filter noise margin (dB)
 
 
 class AudioPlaybackConfig(BaseModel):
@@ -65,7 +71,9 @@ class STTConfig(BaseModel):
     timeout_s: float = 15.0
     device: str = "cpu"               # "cpu" or "cuda"
     compute_type: str = "int8"        # "int8", "float16", "float32"
-    models_dir: str = "models/stt"    # Directory for STT models
+    # Streaming mode
+    streaming: bool = True            # Use Whisper streaming for lower latency
+    chunk_length_s: float = 5.0       # Audio chunk length for streaming (seconds)
 
 
 class LLMInstanceConfig(BaseModel):
@@ -123,6 +131,11 @@ class LTMConfig(BaseModel):
     retrieval_top_k: int = 5
     keyword_weight: float = 0.6
     recency_weight: float = 0.4
+    # Vector embeddings (ChromaDB)
+    use_vector_store: bool = True
+    vector_store_path: str = "data/memory/chroma"
+    embedding_model: str = "all-MiniLM-L6-v2"
+    vector_weight: float = 0.7
 
 
 class MemoryConfig(BaseModel):
@@ -161,6 +174,10 @@ class PipelineConfig(BaseModel):
     interruption_debounce_frames: int = 10   # Consecutive speech frames before barge-in fires
     startup_greeting: bool = True
     startup_message: str = "Hello! I'm Sorachio. I'm ready to chat."
+    # Rate limiting
+    enable_rate_limiting: bool = True
+    rate_limit_max_requests: int = 10
+    rate_limit_window_seconds: float = 60.0
 
 
 class SystemConfig(BaseModel):

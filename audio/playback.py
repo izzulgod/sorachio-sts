@@ -146,6 +146,9 @@ class AudioPlayback:
         self.playback_active_event.set()
         if self._aec:
             self._aec.set_reference_active(True)
+            # Feed reference signal for spectral subtraction AEC
+            ref_bytes = audio.astype(np.int16).tobytes()
+            self._aec.set_reference_signal(ref_bytes)
         self._interrupted = False
 
         # No audio device → silently consume the chunk

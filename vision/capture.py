@@ -1,5 +1,4 @@
 import base64
-from typing import Optional
 
 try:
     import cv2
@@ -12,11 +11,11 @@ from utils.logging_setup import get_logger
 log = get_logger("vision.capture")
 
 
-def capture_frame_base64(device_index: int = 0, max_size: int = 512) -> Optional[str]:
+def capture_frame_base64(device_index: int = 0, max_size: int = 512) -> str | None:
     """
     Capture a single frame from the specified camera device, resize it if necessary,
     and return it as a Base64 encoded JPEG string.
-    
+
     Returns None if the camera is unavailable or an error occurs.
     """
     if not HAS_CV2:
@@ -34,7 +33,7 @@ def capture_frame_base64(device_index: int = 0, max_size: int = 512) -> Optional
         # Read a few frames to let the camera sensor adjust to light (warm-up)
         for _ in range(5):
             ret, frame = cap.read()
-        
+
         # Release the camera immediately after grabbing the frame
         cap.release()
 
@@ -44,6 +43,7 @@ def capture_frame_base64(device_index: int = 0, max_size: int = 512) -> Optional
 
         # Resize the frame to save tokens and processing time
         h, w = frame.shape[:2]
+        new_w, new_h = w, h
         if max(h, w) > max_size:
             scale = max_size / max(h, w)
             new_w, new_h = int(w * scale), int(h * scale)
@@ -52,7 +52,7 @@ def capture_frame_base64(device_index: int = 0, max_size: int = 512) -> Optional
         # Encode frame as JPEG
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
         success, buffer = cv2.imencode('.jpg', frame, encode_param)
-        
+
         if not success:
             log.warning("Failed to encode frame to JPEG.")
             return None

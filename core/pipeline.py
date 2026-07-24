@@ -14,6 +14,7 @@ Interruption flows backwards: VAD → interrupt_event → Personality + TTS + Pl
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from config.settings import SorachioSettings, resolve_path
 from core.events import EventType, get_bus
@@ -66,6 +67,8 @@ class SorachioPipeline:
         self._playback = None
         self._llm_gateway = None
         self._llm_personality = None
+        self._rate_limiter = None
+        self._emotion_tracker = None
 
         # --- Tasks ---
         self._tasks: list[asyncio.Task] = []
@@ -79,6 +82,17 @@ class SorachioPipeline:
         log.info("=" * 60)
         log.info("  Sorachio-STS Pipeline Initializing")
         log.info("=" * 60)
+
+        # ---- Rate Limiter ----
+        from utils.rate_limiter import RateLimiter
+        pipe_cfg = cfg.pipeline
+        if pipe_cfg.enable_rate_limiting:
+            self._rate_limiter = RateLimiter(
+                max_requests=pipe_cfg.rate_limit_max_requests,
+                window_seconds=pipe_cfg.rate_limit_window_seconds,
+            )
+        else:
+            self._rate_limiter = None
 
         # ---- LLM Clients ----
         from llm.llama_client import LlamaClient
@@ -112,7 +126,8 @@ class SorachioPipeline:
             timeout_s=stt_cfg.timeout_s,
             device=stt_cfg.device,
             compute_type=stt_cfg.compute_type,
-            models_dir=str(root / stt_cfg.models_dir),
+            streaming=stt_cfg.streaming,
+            chunk_length_s=stt_cfg.chunk_length_s,
         )
         stt_ok = await self._stt.initialize()
         if not stt_ok:
@@ -129,22 +144,46 @@ class SorachioPipeline:
         # ---- Memory ----
         from memory.long_term import LongTermMemory
         from memory.short_term import ShortTermMemory
+        from memory.vector_store import VectorStore
         mem_cfg = cfg.memory
         self._stm = ShortTermMemory(
             max_messages=mem_cfg.short_term.max_messages,
             include_emotions=mem_cfg.short_term.include_emotions,
         )
+
+        # Initialize vector store if enabled
+        vector_store = None
+        if mem_cfg.long_term.use_vector_store:
+            vector_store = VectorStore(
+                storage_path=str(root / mem_cfg.long_term.vector_store_path),
+                embedding_model=mem_cfg.long_term.embedding_model,
+            )
+            vs_ok = await vector_store.initialize()
+            if not vs_ok:
+                log.warning("[Pipeline] Vector store unavailable — falling back to keyword search")
+                vector_store = None
+
         self._ltm = LongTermMemory(
             storage_path=str(root / mem_cfg.long_term.storage_path),
             max_entries=mem_cfg.long_term.max_entries,
             importance_threshold=mem_cfg.long_term.importance_threshold,
             retrieval_top_k=mem_cfg.long_term.retrieval_top_k,
+            vector_store=vector_store,
+            vector_weight=mem_cfg.long_term.vector_weight,
         )
         await self._ltm.initialize()
 
         # ---- Context Manager ----
         from context.context_manager import ContextManager
+        from memory.emotion_tracker import EmotionTracker
         ctx_cfg = cfg.context
+
+        # Initialize emotion tracker
+        self._emotion_tracker = EmotionTracker(
+            history_size=50,
+            summary_interval_turns=10,
+        )
+
         self._context = ContextManager(
             stm=self._stm,
             ltm=self._ltm,
@@ -153,6 +192,7 @@ class SorachioPipeline:
             max_stm_in_prompt=ctx_cfg.max_stm_in_prompt,
             max_ltm_in_prompt=ctx_cfg.max_ltm_in_prompt,
             include_emotional_state=ctx_cfg.include_emotional_state,
+            emotion_tracker=self._emotion_tracker,
         )
 
         # ---- Personality Core ----
@@ -184,8 +224,8 @@ class SorachioPipeline:
 
         # ---- Audio Capture ----
         from audio.capture import AudioCapture
-        from audio.playback import AudioPlayback
         from audio.echo_cancellation import create_aec
+        from audio.playback import AudioPlayback
         audio_cfg = cfg.audio
 
         # Create AEC provider
@@ -193,7 +233,13 @@ class SorachioPipeline:
         if aec_cfg.enabled:
             aec_provider = create_aec(
                 provider=aec_cfg.provider,
-                attenuation_factor=aec_cfg.attenuation_factor
+                attenuation_factor=aec_cfg.attenuation_factor,
+                sample_rate=audio_cfg.capture.sample_rate,
+                # Calibration AEC settings
+                calibration_duration_s=aec_cfg.calibration_duration_s,
+                lms_filter_length=aec_cfg.lms_filter_length,
+                lms_step_size=aec_cfg.lms_step_size,
+                wiener_noise_margin=aec_cfg.wiener_noise_margin,
             )
         else:
             aec_provider = create_aec("null")
@@ -242,8 +288,114 @@ class SorachioPipeline:
         await self._llm_gateway.warm_up(system_prompt=gw_system_prompt)
         await self._llm_personality.warm_up(system_prompt=pc_system_prompt)
 
+        # ---- AEC Calibration ----
+        # Run calibration if enabled and AEC provider supports it
+        if (aec_cfg.enabled and
+            aec_cfg.provider == "calibration" and
+            aec_cfg.calibration_auto_run):
+            await self._calibrate_aec(aec_provider)
+
         log.info("[Pipeline] All components initialized [OK]")
         return True
+
+    async def _calibrate_aec(self, aec_provider) -> None:
+        """
+        Run AEC calibration phase.
+
+        Plays a chirp signal through the speaker while recording from mic,
+        then learns room acoustics for echo cancellation.
+        """
+        from audio.echo_cancellation import CalibrationAEC
+
+        if not isinstance(aec_provider, CalibrationAEC):
+            log.debug("[Pipeline] AEC provider does not support calibration")
+            return
+
+        log.info("[Pipeline] Starting AEC calibration...")
+        log.info("[Pipeline] Please remain silent during calibration")
+
+        # Ensure playback and capture are ready
+        if not self._playback or not self._capture:
+            log.warning("[Pipeline] Playback/Capture not ready for calibration")
+            return
+
+        # Run calibration in a thread to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+
+        def _run_calibration():
+            """Run calibration synchronously."""
+            import time
+
+            import numpy as np
+            import sounddevice as sd
+
+            sample_rate = self.settings.audio.capture.sample_rate
+            cal_duration = self.settings.audio.echo_cancellation.calibration_duration_s
+
+            # Generate chirp signal
+            chirp = aec_provider._generate_chirp()
+            chirp_samples = len(chirp)
+
+            # Play chirp and record simultaneously
+            log.info(f"[Pipeline] Playing calibration chirp ({cal_duration:.1f}s)...")
+
+            # Start recording in a separate thread
+            recorded_data = np.zeros(chirp_samples, dtype=np.float32)
+            recording_done = threading.Event()
+
+            def _record():
+                nonlocal recorded_data
+                try:
+                    recorded = sd.rec(
+                        chirp_samples,
+                        samplerate=sample_rate,
+                        channels=1,
+                        dtype="float32",
+                        device=self._capture.device_index,
+                    )
+                    sd.wait()
+                    recorded_data = recorded[:, 0]
+                except Exception as e:
+                    log.error(f"[Pipeline] Calibration recording failed: {e}")
+                finally:
+                    recording_done.set()
+
+            record_thread = threading.Thread(target=_record, daemon=True)
+            record_thread.start()
+
+            # Small delay to ensure recording has started
+            time.sleep(0.1)
+
+            # Play chirp through speaker
+            try:
+                sd.play(
+                    chirp,
+                    samplerate=sample_rate,
+                    device=self._playback.device_index,
+                    blocking=True,
+                )
+            except Exception as e:
+                log.error(f"[Pipeline] Calibration playback failed: {e}")
+
+            # Wait for recording to complete
+            recording_done.wait(timeout=cal_duration + 2.0)
+
+            # Run calibration analysis
+            calibration_data = aec_provider._analyze_calibration(chirp, recorded_data)
+            aec_provider._calibration = calibration_data
+
+            if calibration_data.is_valid:
+                aec_provider._initialize_lms_filter()
+                log.info(f"[Pipeline] AEC calibration complete — quality={calibration_data.quality_score:.2f}")
+                log.info(f"[Pipeline] Echo delay: {calibration_data.echo_delay_ms:.1f}ms")
+                log.info(f"[Pipeline] Interrupt threshold: {calibration_data.interrupt_threshold:.3f}")
+            else:
+                log.warning("[Pipeline] AEC calibration failed — using default settings")
+
+        try:
+            await loop.run_in_executor(None, _run_calibration)
+        except Exception as e:
+            log.error(f"[Pipeline] AEC calibration error: {e}")
 
     async def run(self) -> None:
         """Start all workers and run until shutdown."""
@@ -266,6 +418,11 @@ class SorachioPipeline:
         if self.settings.pipeline.startup_greeting and self._tts._available:
             msg = self.settings.pipeline.startup_message
             log.info(f"[Pipeline] Greeting: {msg!r}")
+            # Mute during greeting playback to avoid capturing TTS output
+            self._capture.mute()
+
+            # Temporarily disable interruption callback so the greeting does not interrupt itself
+            self._capture.interrupt_callback = None
 
             greeting_done = asyncio.Event()
 
@@ -314,7 +471,22 @@ class SorachioPipeline:
             except asyncio.CancelledError:
                 break
 
-            transcript = await self._stt.transcribe(audio_bytes)
+            # Use streaming if available for lower latency
+            if self._stt.streaming:
+                transcript_parts: list[str] = []
+                async for partial in self._stt.transcribe_streaming(audio_bytes):
+                    transcript_parts.append(partial)
+                    # Emit partial result for real-time feedback
+                    if len(transcript_parts) > 1:
+                        await self.bus.emit(
+                            EventType.STT_RESULT,
+                            data=" ".join(transcript_parts),
+                            source="stt",
+                        )
+                transcript = " ".join(transcript_parts) if transcript_parts else None
+            else:
+                transcript = await self._stt.transcribe(audio_bytes)
+
             self._stt_queue.task_done()
 
             if transcript:
@@ -374,6 +546,15 @@ class SorachioPipeline:
 
             log.info(f"[Cognitive] Input: {transcript!r}")
 
+            # Rate limiting check
+            if self._rate_limiter and not await self._rate_limiter.allow():
+                log.warning("[Cognitive] Rate limit exceeded — dropping input")
+                self._cognitive_queue.task_done()
+                # Unmute mic so user can try again
+                if self._capture:
+                    self._capture.unmute()
+                continue
+
             # ── Mute the mic while the pipeline is busy ─────────────────
             if self._capture:
                 self._capture.mute()
@@ -409,7 +590,10 @@ class SorachioPipeline:
             # Vision integration: capture snapshot if requested with explicit visual intent
             image_b64 = None
             is_visual_topic = decision.get("topic") == "visual_analysis"
-            visual_triggers = ("look", "see", "watch", "camera", "picture", "photo", "show", "view", "lihat", "kamera", "foto", "gambar")
+            visual_triggers = (
+                "look", "see", "watch", "camera", "picture", "photo",
+                "show", "view", "lihat", "kamera", "foto", "gambar",
+            )
             has_visual_intent = any(w in transcript.lower() for w in visual_triggers)
 
             if is_visual_topic and has_visual_intent and self.settings.vision.enabled:
@@ -487,11 +671,11 @@ class SorachioPipeline:
         # 2. Stop playback — calls sd.stop() and drains audio_queue
         self._playback.interrupt()
 
-        # 3. Unmute the mic so the barge-in speech can be captured
+        # Unmute the mic immediately so the barge-in speech can be captured
         if self._capture:
             self._capture.unmute()
 
-        # 4. Inject interruption metadata into STM
+        # Inject interruption metadata into STM
         if self._stm:
             await self._stm.mark_last_interrupted()
 

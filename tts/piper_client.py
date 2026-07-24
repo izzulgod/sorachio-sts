@@ -152,7 +152,7 @@ class PiperTTSClient:
                         # Read actual sample rate from the model config
                         json_path = Path(str(onnx_path) + ".json")
                         if json_path.exists():
-                            with open(json_path, "r", encoding="utf-8") as f:
+                            with open(json_path, encoding="utf-8") as f:
                                 config = json.load(f)
                             model_sr = config.get("audio", {}).get("sample_rate", 22050)
                             log.debug(
@@ -302,7 +302,7 @@ class PiperTTSClient:
             return "id"
 
         try:
-            from langdetect import detect, DetectorFactory
+            from langdetect import DetectorFactory, detect
             # Seed for deterministic results across runs
             DetectorFactory.seed = 0
             detected = detect(text)
