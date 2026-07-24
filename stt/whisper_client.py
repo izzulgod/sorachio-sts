@@ -16,7 +16,10 @@ Flow:
 from __future__ import annotations
 
 import asyncio
+import queue
 import re
+import threading
+from collections.abc import AsyncIterator
 
 import numpy as np
 
@@ -176,6 +179,8 @@ class WhisperClient:
         timeout_s: float = 10.0,
         device: str = "cpu",
         compute_type: str = "int8",
+        streaming: bool = True,
+        chunk_length_s: float = 5.0,
     ):
         self.model_size = model_size
         # None or "auto" = auto-detect; otherwise pin to a language
@@ -186,6 +191,8 @@ class WhisperClient:
         self.timeout_s = timeout_s
         self.device = device
         self.compute_type = compute_type
+        self.streaming = streaming
+        self.chunk_length_s = chunk_length_s
 
         self._model = None
         self._available = False
@@ -288,6 +295,124 @@ class WhisperClient:
             return None
 
         return transcript
+
+    async def transcribe_streaming(
+        self,
+        audio_bytes: bytes,
+    ) -> AsyncIterator[str]:
+        """
+        Transcribe audio with streaming partial results.
+
+        Yields partial transcripts as they become available.
+        Falls back to non-streaming if streaming not supported.
+        """
+        if not self.streaming or not self._available:
+            # Fallback to non-streaming
+            result = await self.transcribe(audio_bytes)
+            if result:
+                yield result
+            return
+
+        if not self._model or len(audio_bytes) < 1000:
+            return
+
+        try:
+            async for chunk in self._transcribe_streaming_async(audio_bytes):
+                yield chunk
+        except asyncio.TimeoutError:
+            log.warning(f"[STT] Streaming timeout after {self.timeout_s}s")
+        except Exception as e:
+            log.error(f"[STT] Streaming error: {e}", exc_info=True)
+
+    async def _transcribe_streaming_async(
+        self,
+        audio_bytes: bytes,
+    ) -> AsyncIterator[str]:
+        """Async wrapper for streaming transcription."""
+        loop = asyncio.get_event_loop()
+
+        # Detect language first
+        target_lang = await loop.run_in_executor(
+            None, self._detect_language_sync, audio_bytes
+        )
+
+        # Run streaming transcription in executor
+        audio = _pcm_to_float32(audio_bytes)
+
+        def _stream_gen():
+            try:
+                segments_gen, info = self._model.transcribe(
+                    audio,
+                    language=target_lang,
+                    beam_size=self.beam_size,
+                    temperature=self.temperature,
+                    vad_filter=True,
+                    vad_parameters=dict(
+                        min_silence_duration_ms=300,
+                        speech_pad_ms=200,
+                    ),
+                    compression_ratio_threshold=2.0,
+                    log_prob_threshold=-1.0,
+                    no_speech_threshold=0.6,
+                    condition_on_previous_text=False,
+                )
+
+                # Yield segments as they complete
+                for segment in segments_gen:
+                    text = _clean_transcript(segment.text)
+                    if text:
+                        yield text
+
+            except Exception as e:
+                log.error(f"[STT] Streaming generation error: {e}")
+
+        # Run in executor and yield
+        import queue
+        result_queue: queue.Queue = queue.Queue()
+        done_event = threading.Event()
+
+        def _run_stream():
+            try:
+                for chunk in _stream_gen():
+                    result_queue.put(chunk)
+            finally:
+                done_event.set()
+
+        stream_thread = threading.Thread(target=_run_stream, daemon=True)
+        stream_thread.start()
+
+        # Yield results as they arrive
+        while not done_event.is_set() or not result_queue.empty():
+            try:
+                chunk = result_queue.get(timeout=0.1)
+                yield chunk
+            except queue.Empty:
+                continue
+
+    def _detect_language_sync(self, audio_bytes: bytes) -> str:
+        """Synchronous language detection."""
+        if self.language is not None:
+            return self.language
+
+        try:
+            audio = _pcm_to_float32(audio_bytes)
+            _, _, all_probs = self._model.detect_language(audio)
+            probs = dict(all_probs)
+
+            id_prob = probs.get("id", 0.0)
+            ms_prob = probs.get("ms", 0.0)
+            jw_prob = probs.get("jw", 0.0)
+            su_prob = probs.get("su", 0.0)
+            en_prob = probs.get("en", 0.0)
+
+            total_id_prob = id_prob + ms_prob + jw_prob + su_prob
+
+            if total_id_prob > en_prob and total_id_prob > 0.15:
+                return "id"
+            return "en"
+
+        except Exception:
+            return "en"
 
     def _transcribe_sync(self, audio_bytes: bytes) -> str | None:
         """Synchronous transcription (runs in executor).

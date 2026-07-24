@@ -66,6 +66,8 @@ class SorachioPipeline:
         self._playback = None
         self._llm_gateway = None
         self._llm_personality = None
+        self._rate_limiter = None
+        self._emotion_tracker = None
 
         # --- Tasks ---
         self._tasks: list[asyncio.Task] = []
@@ -79,6 +81,17 @@ class SorachioPipeline:
         log.info("=" * 60)
         log.info("  Sorachio-STS Pipeline Initializing")
         log.info("=" * 60)
+
+        # ---- Rate Limiter ----
+        from utils.rate_limiter import RateLimiter
+        pipe_cfg = cfg.pipeline
+        if pipe_cfg.enable_rate_limiting:
+            self._rate_limiter = RateLimiter(
+                max_requests=pipe_cfg.rate_limit_max_requests,
+                window_seconds=pipe_cfg.rate_limit_window_seconds,
+            )
+        else:
+            self._rate_limiter = None
 
         # ---- LLM Clients ----
         from llm.llama_client import LlamaClient
@@ -112,6 +125,8 @@ class SorachioPipeline:
             timeout_s=stt_cfg.timeout_s,
             device=stt_cfg.device,
             compute_type=stt_cfg.compute_type,
+            streaming=stt_cfg.streaming,
+            chunk_length_s=stt_cfg.chunk_length_s,
         )
         stt_ok = await self._stt.initialize()
         if not stt_ok:
@@ -128,22 +143,46 @@ class SorachioPipeline:
         # ---- Memory ----
         from memory.long_term import LongTermMemory
         from memory.short_term import ShortTermMemory
+        from memory.vector_store import VectorStore
         mem_cfg = cfg.memory
         self._stm = ShortTermMemory(
             max_messages=mem_cfg.short_term.max_messages,
             include_emotions=mem_cfg.short_term.include_emotions,
         )
+
+        # Initialize vector store if enabled
+        vector_store = None
+        if mem_cfg.long_term.use_vector_store:
+            vector_store = VectorStore(
+                storage_path=str(root / mem_cfg.long_term.vector_store_path),
+                embedding_model=mem_cfg.long_term.embedding_model,
+            )
+            vs_ok = await vector_store.initialize()
+            if not vs_ok:
+                log.warning("[Pipeline] Vector store unavailable — falling back to keyword search")
+                vector_store = None
+
         self._ltm = LongTermMemory(
             storage_path=str(root / mem_cfg.long_term.storage_path),
             max_entries=mem_cfg.long_term.max_entries,
             importance_threshold=mem_cfg.long_term.importance_threshold,
             retrieval_top_k=mem_cfg.long_term.retrieval_top_k,
+            vector_store=vector_store,
+            vector_weight=mem_cfg.long_term.vector_weight,
         )
         await self._ltm.initialize()
 
         # ---- Context Manager ----
         from context.context_manager import ContextManager
+        from memory.emotion_tracker import EmotionTracker
         ctx_cfg = cfg.context
+
+        # Initialize emotion tracker
+        self._emotion_tracker = EmotionTracker(
+            history_size=50,
+            summary_interval_turns=10,
+        )
+
         self._context = ContextManager(
             stm=self._stm,
             ltm=self._ltm,
@@ -152,6 +191,7 @@ class SorachioPipeline:
             max_stm_in_prompt=ctx_cfg.max_stm_in_prompt,
             max_ltm_in_prompt=ctx_cfg.max_ltm_in_prompt,
             include_emotional_state=ctx_cfg.include_emotional_state,
+            emotion_tracker=self._emotion_tracker,
         )
 
         # ---- Personality Core ----
@@ -192,7 +232,9 @@ class SorachioPipeline:
         if aec_cfg.enabled:
             aec_provider = create_aec(
                 provider=aec_cfg.provider,
-                attenuation_factor=aec_cfg.attenuation_factor
+                attenuation_factor=aec_cfg.attenuation_factor,
+                spectral_floor=aec_cfg.spectral_floor,
+                sample_rate=audio_cfg.capture.sample_rate,
             )
         else:
             aec_provider = create_aec("null")
@@ -317,7 +359,22 @@ class SorachioPipeline:
             except asyncio.CancelledError:
                 break
 
-            transcript = await self._stt.transcribe(audio_bytes)
+            # Use streaming if available for lower latency
+            if self._stt.streaming:
+                transcript_parts: list[str] = []
+                async for partial in self._stt.transcribe_streaming(audio_bytes):
+                    transcript_parts.append(partial)
+                    # Emit partial result for real-time feedback
+                    if len(transcript_parts) > 1:
+                        await self.bus.emit(
+                            EventType.STT_RESULT,
+                            data=" ".join(transcript_parts),
+                            source="stt",
+                        )
+                transcript = " ".join(transcript_parts) if transcript_parts else None
+            else:
+                transcript = await self._stt.transcribe(audio_bytes)
+
             self._stt_queue.task_done()
 
             if transcript:
@@ -345,6 +402,15 @@ class SorachioPipeline:
                 break
 
             log.info(f"[Cognitive] Input: {transcript!r}")
+
+            # Rate limiting check
+            if self._rate_limiter and not await self._rate_limiter.allow():
+                log.warning("[Cognitive] Rate limit exceeded — dropping input")
+                self._cognitive_queue.task_done()
+                # Unmute mic so user can try again
+                if self._capture:
+                    self._capture.unmute()
+                continue
 
             # ── Mute the mic while the pipeline is busy ─────────────────
             if self._capture:
