@@ -111,6 +111,7 @@ class AudioCapture:
         # "logically muted").  VAD still runs so interrupt detection works,
         # but audio never reaches the STT queue.
         self._muted = threading.Event()
+        self._playback_preroll_frames = 0
 
         # ── Probe audio input device at init ─────────────────────
         self._audio_available = self._probe_input_device()
@@ -163,10 +164,11 @@ class AudioCapture:
             # Calculate average dBFS of the noise snippet
             from audio.acoustic_gate import compute_dbfs
             dbfs = compute_dbfs(noise_data.tobytes())
-
-            # Set threshold to 6.0 dB above the background noise floor, clamped to safe ranges
-            calibrated_threshold = max(-50.0, min(-20.0, dbfs + 6.0))
-
+            
+            # Set threshold to 8.0 dB above the background noise floor, clamped to safe ranges (min -38 dBFS)
+            calibrated_threshold = max(-38.0, min(-20.0, dbfs + 8.0))
+            
+            self._calibrated_threshold = calibrated_threshold
             self._acoustic_gate.threshold_dbfs = calibrated_threshold
             log.info(
                 f"[Capture] Calibration complete: Background Noise={dbfs:.1f} dBFS | "
@@ -174,6 +176,7 @@ class AudioCapture:
             )
         except Exception as e:
             log.warning(f"[Capture] Auto-calibration failed, using default: {e}")
+            self._calibrated_threshold = -38.0
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start capture in background threads."""
@@ -250,13 +253,53 @@ class AudioCapture:
             pcm_bytes = self._aec.process(pcm_bytes)
 
         # Acoustic Gate processing
+        # ── Dynamic Acoustic Gate Threshold during TTS Playback ────────────────
+        # Tracks speaker output baseline energy in real-time via exponential moving average.
+        # Threshold stays 10.0 dB above the speaker baseline so TTS speaker bleed alone is
+        # ALWAYS dropped by the Acoustic Gate (never reaches WebRTC VAD → no self-interrupts),
+        # while user voice (+10 dB energy jump above speaker) passes the gate.
+        cal_thresh = getattr(self, "_calibrated_threshold", -38.0)
         from audio.acoustic_gate import compute_dbfs
         dbfs = compute_dbfs(pcm_bytes)
+
+        is_playback = bool(self.playback_active_event and self.playback_active_event.is_set())
+
+        if is_playback:
+            # Reset baseline at start of playback session
+            if not getattr(self, "_in_playback", False):
+                self._in_playback = True
+                self._speaker_baseline_dbfs = max(dbfs, cal_thresh + 10.0)
+                self._playback_preroll_frames = 8  # 8 frames * 30ms = 240ms pre-roll warmup
+            else:
+                # Fast attack on peaks, slow decay (0.2 dB per frame) during pauses between words
+                if dbfs > self._speaker_baseline_dbfs:
+                    self._speaker_baseline_dbfs = 0.5 * self._speaker_baseline_dbfs + 0.5 * dbfs
+                else:
+                    self._speaker_baseline_dbfs = max(cal_thresh + 6.0, self._speaker_baseline_dbfs - 0.2)
+
+            # High-watermark threshold during playback: speaker peak + 10.0 dB (min -12.0 dBFS)
+            # During the pre-roll warmup period, we force threshold very high (-8.0 dBFS)
+            # to let baseline stabilize and prevent false startup interrupts.
+            if getattr(self, "_playback_preroll_frames", 0) > 0:
+                self._playback_preroll_frames -= 1
+                playback_thresh = -8.0
+            else:
+                playback_thresh = max(-12.0, self._speaker_baseline_dbfs + 10.0)
+
+            self._acoustic_gate.threshold_dbfs = playback_thresh
+        else:
+            if getattr(self, "_in_playback", False):
+                self._in_playback = False  # Mark transition back to idle
+                self._playback_preroll_frames = 0
+            self._speaker_baseline_dbfs = cal_thresh
+            self._acoustic_gate.threshold_dbfs = cal_thresh
+
+        # Acoustic Gate processing
         gate_result = self._acoustic_gate.gate(pcm_bytes)
 
         if gate_result != self._gate_passed_last:
             self._gate_passed_last = gate_result
-            _log_event(f"Acoustic gate state changed: passed={gate_result} (dBFS={dbfs:.2f})", force=True)
+            _log_event(f"Acoustic gate state changed: passed={gate_result} (dBFS={dbfs:.2f}, thresh={self._acoustic_gate.threshold_dbfs:.1f})", force=True)
 
         if not gate_result:
             # Enqueue a sentinel (empty bytes) so the VAD worker knows time passed.
@@ -276,8 +319,9 @@ class AudioCapture:
             _log_event("VAD queue full, dropped audio frame", force=True)
 
     def _vad_worker(self) -> None:
-        """VAD processing thread — detects speech segments."""
+        """VAD processing thread — detects speech segments with pre-trigger history."""
         speech_frames: list[bytes] = []
+        history_frames: list[bytes] = []  # Rolling buffer of frames prior to speech onset
         triggered = False
         silent_frames = 0
         active_speech_frames = 0
@@ -286,7 +330,6 @@ class AudioCapture:
         max_frames = int(self.max_speech_duration_s * 1000 / self.chunk_ms)
 
         # Minimum active speech frames (non-silence) to consider it a real speech turn.
-        # 6 frames * 30ms = 180ms of actual voice. Prevents pops/clicks from triggering.
         min_active_speech_frames = 6
 
         while self._running:
@@ -312,11 +355,21 @@ class AudioCapture:
                     log.error(f"[VAD ERROR] is_speech failed: {e}")
                     is_speech = False
 
+            # Keep a rolling history of the last 8 frames (~240ms) prior to triggering speech.
+            # This captures the consonants/quiet onsets of words (e.g. "co" in "coba").
+            if not triggered and pcm != b"":
+                history_frames.append(pcm)
+                if len(history_frames) > 8:
+                    history_frames.pop(0)
+
             if is_speech:
                 if not triggered:
                     triggered = True
                     active_speech_frames = 0
-                    _log_event("VAD state: Speech started", force=True)
+                    # Prepend the pre-trigger history to catch speech onset
+                    speech_frames.extend(history_frames)
+                    history_frames.clear()
+                    _log_event("VAD state: Speech started (prepended history)", force=True)
                     log.debug("[VAD] Speech detected")
                     if self._loop:
                         from core.events import EventType, get_bus
@@ -339,9 +392,13 @@ class AudioCapture:
                             )
                         # Synchronously unmute from this thread so that _flush_speech
                         # will NOT discard the barge-in speech due to async timing.
-                        # threading.Event.clear() is thread-safe.
                         self._muted.clear()
-                        # Reset to prevent continuous firing
+
+                        # Purge speaker audio buffered prior to interrupt trigger
+                        speech_frames.clear()
+                        history_frames.clear()
+                        active_speech_frames = 0
+                        silent_frames = 0
                         interrupt_speech_frames = 0
 
                 speech_frames.append(pcm)
@@ -359,6 +416,7 @@ class AudioCapture:
                     _log_event("VAD: Max duration exceeded, flushing now", force=True)
                     self._flush_speech(speech_frames, active_speech_frames, min_active_speech_frames)
                     speech_frames = []
+                    history_frames.clear()
                     triggered = False
                     silent_frames = 0
                     active_speech_frames = 0
@@ -388,6 +446,7 @@ class AudioCapture:
                         # End of utterance
                         self._flush_speech(speech_frames, active_speech_frames, min_active_speech_frames)
                         speech_frames = []
+                        history_frames.clear()
                         triggered = False
                         silent_frames = 0
                         active_speech_frames = 0
@@ -415,20 +474,28 @@ class AudioCapture:
                 f"({active_speech_frames} < {min_active_speech_frames})",
                 force=True,
             )
-            log.debug(f"[VAD] Too few active frames ({active_speech_frames}) — discarding noise/pop")
+            log.info(f"[VAD] Too few active frames ({active_speech_frames}) — discarding noise/pop")
             return
 
         audio_bytes = b"".join(frames)
+        duration_s = len(audio_bytes) / (self.sample_rate * 2)  # 16-bit mono
 
-        # Guard: whisper-cli crashes (0xC0000005) on audio shorter than ~1 second.
-        # 16kHz * 2 bytes/sample * 1 second = 32000 bytes minimum.
-        min_bytes = self.sample_rate * 2 * 1  # 1 second of 16-bit mono
+        # Absolute minimum speech length (0.3 seconds = 9600 bytes) to filter quick noise spikes
+        min_bytes = int(self.sample_rate * 2 * 0.3)
         if len(audio_bytes) < min_bytes:
             _log_event(f"_flush_speech discarded: audio too short ({len(audio_bytes)} bytes < {min_bytes})", force=True)
-            log.debug(
-                f"[VAD] Audio too short ({len(audio_bytes)} bytes < {min_bytes}) — discarding"
+            log.info(
+                f"[VAD] Audio too short ({duration_s:.2f}s / {len(audio_bytes)} bytes) — discarding noise"
             )
             return
+
+        # Target minimum length for STT robustness is 1.0 second (32000 bytes).
+        # Pad short utterances (0.3s - 1.0s) with digital silence so faster-whisper gets clean audio.
+        target_bytes = self.sample_rate * 2 * 1
+        if len(audio_bytes) < target_bytes:
+            padding_len = target_bytes - len(audio_bytes)
+            audio_bytes = audio_bytes + (b"\x00" * padding_len)
+            log.info(f"[VAD] Padded short utterance ({duration_s:.2f}s) with {padding_len} bytes silence to 1.0s")
 
         # ── Mute gate: discard audio while pipeline is busy ──────────
         if self._muted.is_set():
@@ -437,7 +504,7 @@ class AudioCapture:
             return
 
         _log_event(f"STT enqueue: Putting {len(audio_bytes)} bytes into stt_queue", force=True)
-        log.debug(f"[VAD] Flushing {len(frames)} frames ({len(audio_bytes)} bytes)")
+        log.info(f"[VAD] ✓ Flushing speech: {len(frames)} frames, {duration_s:.1f}s, {len(audio_bytes)} bytes")
 
         if self._loop:
             try:

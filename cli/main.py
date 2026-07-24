@@ -42,6 +42,11 @@ from rich.table import Table
 # ------------------------------------------------------------------
 # Global suppression of unauthenticated HF warnings and PyTorch spam
 # ------------------------------------------------------------------
+_project_root = Path(__file__).parent.parent
+
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = str(_project_root / "models" / "tts" / "kokoro")
+
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -158,7 +163,7 @@ def _setup_logging(settings):
 
 def _print_banner():
     console.print(Panel.fit(
-        "[bold cyan]Sorachio-STS[/bold cyan] [dim]v0.1.0[/dim]\n"
+        "[bold cyan]Sorachio-STS[/bold cyan] [dim]v0.2.0[/dim]\n"
         "[dim]Speech To Speech AI Companion System[/dim]",
         border_style="cyan",
     ))
@@ -327,7 +332,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
     # ------------------------------------------------------------------
 
     if single_message:
-        console.print(f"\n[bold cyan]You[/bold cyan]\n└─ {single_message}\n")
+        console.print(f"\n[bold cyan]You[/bold cyan]\n> {single_message}\n")
         voice_cli.start()
         response_ready.clear()
         await get_bus().emit(EventType.STT_RESULT, data=single_message, source="cli")
@@ -345,7 +350,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False):
                 console.print("\n[bold cyan]You[/bold cyan]")
                 user_input = await asyncio.get_running_loop().run_in_executor(
                     None,
-                    lambda: input("└─ ")
+                    lambda: input("> ")
                 )
 
                 user_input = user_input.strip()
@@ -586,7 +591,7 @@ class VoiceCLI:
         self.response_text = ""
         self._spin_stop()
         if self.mode == "text":
-            console.print("[bold green]Sorachio[/bold green]\n└─ ", end="")
+            console.print("[bold green]Sorachio[/bold green]\n> ", end="")
         else:
             console.print("[bold cyan]Sorachio:[/bold cyan] ", end="")
 
@@ -594,7 +599,7 @@ class VoiceCLI:
         token = event.data
         self.response_text += token
         if self.mode == "text":
-            token = token.replace("\n", "\n   ")
+            token = token.replace("\n", "\n  ")
         console.print(token, end="", highlight=False)
 
     async def on_response_end(self, event) -> None:
@@ -710,6 +715,7 @@ def test_stt(
             timeout_s=stt_cfg.timeout_s,
             device=stt_cfg.device,
             compute_type=stt_cfg.compute_type,
+            models_dir=str(_project_root / stt_cfg.models_dir),
         )
         ok = await stt.initialize()
         if not ok:
@@ -750,11 +756,11 @@ def test_tts(
     _setup_logging(settings)
 
     async def _test():
-        from tts.piper_client import PiperTTSClient
+        from tts.kokoro_client import KokoroTTSClient
 
         root = _project_root
         audio_queue: asyncio.Queue = asyncio.Queue()
-        tts = PiperTTSClient(
+        tts = KokoroTTSClient(
             audio_queue=audio_queue,
             voice=settings.tts.voice,
             speed=settings.tts.speed,
@@ -764,7 +770,7 @@ def test_tts(
         )
         ok = await tts.initialize()
         if not ok:
-            console.print("[red]TTS not available. Run: pip install piper-tts[/red]")
+            console.print("[red]TTS not available. Run: pip install kokoro piper-tts[/red]")
             return
 
         console.print(f"[cyan]Synthesizing:[/cyan] {text_input!r}")

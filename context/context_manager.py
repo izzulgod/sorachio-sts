@@ -123,6 +123,17 @@ class ContextManager:
                 "Acknowledge the interruption if natural, and keep your next response brief.]"
             )
 
+        # Explicit spoken language directive for LLM2
+        detected_lang = cognitive_decision.get("detected_language") or cognitive_decision.get("language")
+        if not detected_lang:
+            id_keywords = {"saya", "aku", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih", "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "perkenalkan"}
+            import re
+            words = set(re.findall(r'\b\w+\b', user_input.lower()))
+            detected_lang = "id" if len(words.intersection(id_keywords)) >= 1 else "en"
+
+        lang_name = "English" if detected_lang in ("en", "English") else "Indonesian"
+        context_parts.append(f"[Spoken Language: {lang_name}. You MUST respond in {lang_name}.]")
+
         # Merge dynamic context block into the newest user input
         context_prefix = "\n".join(context_parts)
         final_user_content = user_input

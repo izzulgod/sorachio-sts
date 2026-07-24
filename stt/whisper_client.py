@@ -60,6 +60,13 @@ _HALLUCINATION_PHRASES: set[str] = {
     "thanks for watching!",
     "thank you for watching.",
     "thank you for watching!",
+    "we love you",
+    "we love you.",
+    "we love you too",
+    "i love you",
+    "i love you.",
+    "thank you for sharing",
+    "thank you for sharing that with me",
     "bye.",
     "bye!",
     "bye bye.",
@@ -151,6 +158,11 @@ def _is_hallucination(text: str) -> bool:
                         log.debug(f"[STT] Filtered ngram repetition loop: {ngram1} repeated {repeats} times")
                         return True
 
+    # 4. Filter out developer name/domain name hallucinations generated on silence/noise
+    if "izzulgod.com" in normalised or "translated by" in normalised or normalised == "izzulgod":
+        log.debug(f"[STT] Filtered developer/domain hallucination: '{text}'")
+        return True
+
     # Single word of 4 chars or fewer is almost certainly noise
     if len(normalised.split()) == 1 and len(normalised.rstrip(".,!?")) <= 4:
         return True
@@ -174,7 +186,7 @@ class WhisperClient:
         model_size: str = "base",
         language: str | None = None,
         threads: int = 4,
-        beam_size: int = 5,
+        beam_size: int = 1,
         temperature: float = 0.0,
         timeout_s: float = 10.0,
         device: str = "cpu",
@@ -226,12 +238,27 @@ class WhisperClient:
         try:
             from faster_whisper import WhisperModel
 
-            self._model = WhisperModel(
-                self.model_size,
-                device=self.device,
-                compute_type=self.compute_type,
-                cpu_threads=self.threads,
-            )
+            self.models_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                self._model = WhisperModel(
+                    self.model_size,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    cpu_threads=self.threads,
+                    download_root=str(self.models_dir),
+                    local_files_only=True,
+                )
+            except Exception as offline_err:
+                log.info(f"[STT] Local offline load failed for '{self.model_size}', checking online: {offline_err}")
+                self._model = WhisperModel(
+                    self.model_size,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    cpu_threads=self.threads,
+                    download_root=str(self.models_dir),
+                    local_files_only=False,
+                )
 
             log.info(f"[STT] Model '{self.model_size}' loaded successfully")
 
@@ -279,6 +306,26 @@ class WhisperClient:
         if len(audio_bytes) < 1000:
             log.debug("[STT] Audio too short, skipping")
             return None
+
+        # Debug: save first 3 audio segments to WAV files for offline analysis
+        if not hasattr(self, '_debug_save_count'):
+            self._debug_save_count = 0
+        if self._debug_save_count < 3:
+            try:
+                import wave
+                from pathlib import Path
+                debug_dir = Path("logs/debug_audio")
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                wav_path = debug_dir / f"stt_input_{self._debug_save_count}.wav"
+                with wave.open(str(wav_path), "wb") as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)  # 16-bit
+                    wf.setframerate(16000)
+                    wf.writeframes(audio_bytes)
+                log.info(f"[STT] Debug: saved audio to {wav_path} ({len(audio_bytes)} bytes)")
+                self._debug_save_count += 1
+            except Exception as save_err:
+                log.warning(f"[STT] Debug save failed: {save_err}")
 
         loop = asyncio.get_event_loop()
 
@@ -424,13 +471,20 @@ class WhisperClient:
         Language routing (auto mode):
             We run detect_language() first (extremely fast, ~0.02s) to get
             probabilities. We sum Indonesian and regional candidates (ms, jw, su)
-            and compare against English (en). We then force Whisper to transcribe
-            using either 'id' or 'en'. This completely prevents Whisper from
-            misdetecting background noise or short speech as random languages
-            (like Arabic, French, etc.) and outputting incorrect scripts.
+            and compare against English (en) with a bias correction factor.
+            The Whisper base model has a massive English prior (~43% on silence),
+            so Indonesian probabilities are multiplied by a correction factor
+            to compensate. We then force Whisper to transcribe using either
+            'id' or 'en' to prevent random language misdetection.
         """
         try:
             audio = _pcm_to_float32(audio_bytes)
+            audio_duration_s = len(audio) / 16000.0
+
+            log.info(
+                f"[STT] Processing audio: {len(audio_bytes)} bytes, "
+                f"{audio_duration_s:.1f}s"
+            )
 
             # In auto mode: run fast language candidate check first
             if self.language is None:
@@ -458,6 +512,8 @@ class WhisperClient:
                         target_lang = "id"
                     else:
                         target_lang = "en"
+                        
+                    log.info(f"[STT] Language route → {target_lang}")
                 except Exception as detect_err:
                     log.warning(f"[STT] Language detection failed: {detect_err}")
                     target_lang = "en"
@@ -471,11 +527,8 @@ class WhisperClient:
                 language=target_lang,
                 beam_size=self.beam_size,
                 temperature=self.temperature,
-                vad_filter=True,
-                vad_parameters=dict(
-                    min_silence_duration_ms=300,
-                    speech_pad_ms=200,
-                ),
+                vad_filter=False,  # Audio is pre-filtered by capture.py VAD; disabling secondary VAD speeds up transcription by 1s
+                initial_prompt="Sorachio is an AI companion created by izzulgod. Conversation in English and Indonesian.",
                 # Prevent repetition loops (hallucinations)
                 compression_ratio_threshold=2.0,   # Strict limit on highly repetitive text
                 log_prob_threshold=-1.0,
@@ -488,9 +541,10 @@ class WhisperClient:
             # Not calling list() here causes the pipeline to silently stall.
             segments = list(segments_gen)
 
-            log.debug(
+            log.info(
                 f"[STT] Transcribed | lang={target_lang} | "
-                f"whisper_detected={info.language} (prob={info.language_probability:.2f})"
+                f"whisper_detected={info.language} (prob={info.language_probability:.2f}) | "
+                f"segments={len(segments)}"
             )
 
             # Collect all segment texts
@@ -499,17 +553,47 @@ class WhisperClient:
             transcript = _clean_transcript(full_text)
 
             if transcript:
+                # Text-level language verification to fix audio classifier misdetections (e.g. "Introduce...")
+                verified_lang = self._verify_text_language(transcript, target_lang)
+                self._last_detected_language = verified_lang
+
                 # Filter out known Whisper hallucinations
                 if _is_hallucination(transcript):
-                    log.debug(f"[STT] Filtered hallucination: {transcript!r}")
+                    log.info(f"[STT] Filtered hallucination: {transcript!r}")
                     return None
 
-                log.info(f"[STT] Transcript ({target_lang}): {transcript!r}")
+                log.info(f"[STT] ✓ Result ({verified_lang}): {transcript!r}")
             else:
-                log.debug("[STT] Empty transcript")
+                log.info("[STT] Empty transcript (no speech detected)")
 
             return transcript if transcript else None
 
         except Exception as e:
             log.error(f"[STT] Transcription error: {e}", exc_info=True)
             return None
+
+    def _verify_text_language(self, text: str, initial_lang: str) -> str:
+        """
+        Verify and correct Whisper's audio language classification using text content.
+        Whisper's audio classifier often misclassifies English words starting with 'In-'
+        ('Introduce', 'Inside') as 'id' (Indonesian).
+        """
+        id_keywords = {
+            "saya", "aku", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih",
+            "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "perkenalkan",
+            "siapa", "namamu", "ceritakan", "lihat", "bagaimana", "kabarlah", "kabar"
+        }
+        import re
+        words = set(re.findall(r'\b\w+\b', text.lower()))
+        if len(words.intersection(id_keywords)) >= 1:
+            return "id"
+
+        try:
+            from langdetect import detect
+            text_lang = detect(text)
+            if text_lang == "en":
+                return "en"
+        except Exception:
+            pass
+
+        return initial_lang

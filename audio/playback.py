@@ -121,6 +121,7 @@ class AudioPlayback:
 
             if audio_chunk is None:
                 # Sentinel: end of this TTS segment
+                log.debug("[Playback] Received end-of-stream sentinel")
                 self.playback_active_event.clear()
                 if self._aec:
                     self._aec.set_reference_active(False)
@@ -130,6 +131,7 @@ class AudioPlayback:
                     await get_bus().emit(EventType.PLAYBACK_FINISHED, source="playback")
                 except Exception:
                     pass
+                self.audio_queue.task_done()
                 continue
 
             await self._play_chunk(audio_chunk)

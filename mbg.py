@@ -52,6 +52,10 @@ REPOS_DIR = PROJECT_ROOT / ".repos"
 MODELS_DIR = PROJECT_ROOT / "models"
 VENV_DIR = PROJECT_ROOT / "venv_runtime"
 
+# Force HF_HOME to point to models/tts/kokoro BEFORE any huggingface_hub import
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = str(MODELS_DIR / "tts" / "kokoro")
+
 # Model configurations (only STT is auto-downloaded; LLM models are user-managed)
 MODELS = {}
 
@@ -173,14 +177,14 @@ class MasterBootstrapGuardian:
         for name in BINARIES:
             path = self._get_binary_path(name)
             parts.append(f"{name} [OK]" if path.exists() else f"{name} [FAIL]")
-        # STT model
-        for name, config in MODELS.items():
-            path = config["dir"] / config["file"]
-            if path.exists():
-                size_mb = path.stat().st_size / (1024 * 1024)
-                parts.append(f"{name} [OK] ({size_mb:.0f}MB)")
-            else:
-                parts.append(f"{name} [FAIL]")
+        # Models
+        stt_dir = MODELS_DIR / "stt"
+        parts.append("STT [OK]" if stt_dir.exists() and any(stt_dir.iterdir()) else "STT [FAIL]")
+        piper_model = MODELS_DIR / "tts" / "id_ID-news_tts-medium.onnx"
+        parts.append("Piper [OK]" if piper_model.exists() else "Piper [FAIL]")
+        kokoro_dir = MODELS_DIR / "tts" / "kokoro"
+        kokoro_ok = kokoro_dir.exists() and any(kokoro_dir.rglob("*.pth"))
+        parts.append("Kokoro [OK]" if kokoro_ok else "Kokoro [FAIL]")
         # LLM models (auto-detected)
         for name, config in LLM_MODEL_DIRS.items():
             model_dir = config["dir"]
@@ -243,11 +247,20 @@ class MasterBootstrapGuardian:
             if not self._is_binary_valid(path, config["check_args"]):
                 return False
 
-        # STT model present?
-        for _name, config in MODELS.items():
-            model_path = config["dir"] / config["file"]
-            if not model_path.exists():
-                return False
+        # STT model present in models/stt?
+        stt_dir = MODELS_DIR / "stt"
+        if not stt_dir.exists() or not any(stt_dir.iterdir()):
+            return False
+
+        # TTS Piper model present in models/tts?
+        piper_model = MODELS_DIR / "tts" / "id_ID-news_tts-medium.onnx"
+        if not piper_model.exists():
+            return False
+
+        # TTS Kokoro model present in models/tts/kokoro?
+        kokoro_dir = MODELS_DIR / "tts" / "kokoro"
+        if not kokoro_dir.exists() or not any(kokoro_dir.rglob("*.pth")):
+            return False
 
         # LLM model directories have .gguf files?
         for _name, config in LLM_MODEL_DIRS.items():
@@ -265,7 +278,7 @@ class MasterBootstrapGuardian:
         critical_packages = [
             "httpx", "aiohttp", "pydantic", "sounddevice",
             "numpy", "rich", "typer", "faster_whisper", "piper",
-            "langdetect", "cv2", "PIL",
+            "kokoro", "misaki", "langdetect", "cv2", "PIL",
         ]
         for pkg in critical_packages:
             try:
@@ -331,32 +344,38 @@ class MasterBootstrapGuardian:
             "apt-get": [
                 "libportaudio2", "portaudio19-dev", "libsndfile1",
                 "pulseaudio", "libpulse-dev", "libasound2-dev", "libasound2-plugins",
-                "libvulkan-dev", "vulkan-tools", "spirv-headers", "glslang-tools", "shaderc"
+                "libvulkan-dev", "vulkan-tools", "spirv-headers", "glslang-tools", "shaderc",
+                "espeak-ng", "libespeak-ng-dev"
             ],
             "dnf": [
                 "portaudio", "portaudio-devel", "libsndfile",
                 "pulseaudio", "pulseaudio-libs-devel", "alsa-lib-devel", "alsa-plugins-pulseaudio",
-                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "glslc", "glslang"
+                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "glslc", "glslang",
+                "espeak-ng", "espeak-ng-devel"
             ],
             "yum": [
                 "portaudio", "portaudio-devel", "libsndfile",
                 "pulseaudio", "pulseaudio-libs-devel", "alsa-lib-devel", "alsa-plugins-pulseaudio",
-                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "glslc", "glslang"
+                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "glslc", "glslang",
+                "espeak-ng", "espeak-ng-devel"
             ],
             "pacman": [
                 "portaudio", "libsndfile",
                 "pulseaudio", "alsa-lib", "pulseaudio-alsa",
-                "vulkan-devel", "spirv-headers", "spirv-tools", "shaderc"
+                "vulkan-devel", "spirv-headers", "spirv-tools", "shaderc",
+                "espeak-ng"
             ],
             "zypper": [
                 "portaudio", "portaudio-devel", "libsndfile",
                 "pulseaudio", "alsa-devel", "alsa-plugins-pulse",
-                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "shaderc"
+                "vulkan-devel", "vulkan-headers", "spirv-headers-devel", "spirv-tools", "shaderc",
+                "espeak-ng", "espeak-ng-devel"
             ],
             "apk": [
                 "portaudio-dev", "libsndfile-dev",
                 "pulseaudio-dev", "alsa-lib-dev", "alsa-plugins-pulse",
-                "vulkan-headers", "shaderc"
+                "vulkan-headers", "shaderc",
+                "espeak-ng"
             ],
         }
 
@@ -514,6 +533,8 @@ class MasterBootstrapGuardian:
             "structlog",
             "faster-whisper",
             "piper-tts",
+            "kokoro",
+            "misaki[en]",
             "langdetect",
             "opencv-python",
             "Pillow",
@@ -682,6 +703,14 @@ class MasterBootstrapGuardian:
         if src_bin.exists():
             shutil.copy(src_bin, binary_path)
             log.info(f"{name} built successfully")
+
+            # Copy all backend shared libraries (.so / .dll / .dylib) so Vulkan/CPU backends load at runtime
+            src_dir = src_bin.parent
+            for lib_pattern in ("*.so*", "*.dll", "*.dylib"):
+                for lib_file in src_dir.glob(lib_pattern):
+                    if lib_file.is_file():
+                        shutil.copy(lib_file, BIN_DIR / lib_file.name)
+
             # On Linux, apply cap_ipc_lock so llama-server can mlock() model weights
             # without root (prevents model swapping under memory pressure)
             if name == "llama-server" and os.name != "nt":
@@ -749,16 +778,85 @@ class MasterBootstrapGuardian:
             return False
 
     def _download_models(self) -> None:
-        """Verify LLM model directories and ensure Piper model dir exists."""
-        log.info("Checking models...")
+        """Ensure STT, TTS, and LLM model dependencies are fully downloaded upfront."""
+        log.info("Checking and downloading models...")
 
-        # Verify LLM model directories (user-managed, auto-detected)
+        if not self._are_dependencies_installed():
+            log.info("[MBG] Installing dependencies before model verification...")
+            self._install_dependencies()
+
+        # 1. Verify LLM model directories (user-managed, auto-detected)
         for name, config in LLM_MODEL_DIRS.items():
             self._verify_llm_model_dir(name, config)
 
-        # Create Piper models directory
+        # 2. Pre-download STT Whisper model (small / base) to models/stt/
+        try:
+            stt_model_name = "small"
+            yaml_path = PROJECT_ROOT / "config" / "sorachio.yaml"
+            if yaml_path.exists():
+                import yaml
+                with open(yaml_path, "r", encoding="utf-8") as f:
+                    cfg_data = yaml.safe_load(f)
+                    stt_model_name = cfg_data.get("stt", {}).get("model_size", "small")
+            
+            stt_dir = MODELS_DIR / "stt"
+            stt_dir.mkdir(parents=True, exist_ok=True)
+
+            log.info(f"[MBG] Verifying Whisper STT model ('{stt_model_name}') in {stt_dir}...")
+            from faster_whisper import download_model
+            download_model(stt_model_name, output_dir=str(stt_dir))
+            log.info(f"[MBG] Whisper STT model ('{stt_model_name}') is ready [OK]")
+        except Exception as e:
+            log.warning(f"[MBG] STT model verification: {e}")
+
+        # 3. Pre-download Piper TTS voice models to models/tts/
         pip_models_dir = MODELS_DIR / "tts"
         pip_models_dir.mkdir(parents=True, exist_ok=True)
+
+        tts_voices = ["id_ID-news_tts-medium"]
+        for voice_name in tts_voices:
+            onnx_file = pip_models_dir / f"{voice_name}.onnx"
+            json_file = pip_models_dir / f"{voice_name}.onnx.json"
+            if not onnx_file.exists() or not json_file.exists():
+                log.info(f"[MBG] Pre-downloading TTS voice '{voice_name}'...")
+                lang_parts = voice_name.split("-")
+                lang_code = lang_parts[0].replace("_", "/")
+                voice_code = lang_parts[1]
+                quality = lang_parts[2]
+                base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/{lang_code}/{voice_code}/{quality}/{voice_name}"
+                try:
+                    if not onnx_file.exists():
+                        urllib.request.urlretrieve(f"{base_url}.onnx", onnx_file)
+                    if not json_file.exists():
+                        urllib.request.urlretrieve(f"{base_url}.onnx.json", json_file)
+                    log.info(f"[MBG] TTS voice '{voice_name}' downloaded successfully [OK]")
+                except Exception as e:
+                    log.warning(f"[MBG] Failed to download TTS voice '{voice_name}': {e}")
+            else:
+                log.info(f"[MBG] TTS voice '{voice_name}' is ready [OK]")
+
+        # 4. Pre-download & warm up Kokoro TTS model into models/tts/kokoro/
+        try:
+            kokoro_dir = MODELS_DIR / "tts" / "kokoro"
+            kokoro_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["HF_HOME"] = str(kokoro_dir)
+            try:
+                import huggingface_hub.constants
+                huggingface_hub.constants.HF_HOME = str(kokoro_dir)
+                huggingface_hub.constants.HF_HUB_CACHE = str(kokoro_dir / "hub")
+            except Exception:
+                pass
+
+            log.info(f"[MBG] Verifying Kokoro TTS model ('hexgrad/Kokoro-82M') in {kokoro_dir}...")
+            from kokoro import KPipeline
+            pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+            generator = pipeline("Hello", voice="af_heart", speed=1.0, split_pattern=None)
+            for res in generator:
+                _ = res[-1]
+                break
+            log.info("[MBG] Kokoro TTS model ('hexgrad/Kokoro-82M') is ready [OK]")
+        except Exception as e:
+            log.warning(f"[MBG] Kokoro TTS model verification failed: {e}")
 
     def _download_model(self, name: str, config: dict) -> None:
         """Download a single model."""
@@ -830,16 +928,24 @@ class MasterBootstrapGuardian:
             status = "✓" if path.exists() else "✗"
             print(f"    {status} {name}")
 
-        # STT Model
+        # Models in models/
         print()
-        print("  STT Model:")
-        for name, config in MODELS.items():
-            path = config["dir"] / config["file"]
-            if path.exists():
-                size_mb = path.stat().st_size / (1024 * 1024)
-                print(f"    ✓ {name} ({size_mb:.1f}MB)")
-            else:
-                print(f"    ✗ {name} (not downloaded)")
+        print("  Models (in models/):")
+
+        # STT
+        stt_dir = MODELS_DIR / "stt"
+        stt_ok = stt_dir.exists() and any(stt_dir.iterdir())
+        print(f"    {'✓' if stt_ok else '✗'} STT Model (models/stt/)")
+
+        # Piper TTS
+        piper_model = MODELS_DIR / "tts" / "id_ID-news_tts-medium.onnx"
+        piper_ok = piper_model.exists()
+        print(f"    {'✓' if piper_ok else '✗'} Piper TTS Indonesian (models/tts/id_ID-news_tts-medium.onnx)")
+
+        # Kokoro TTS
+        kokoro_dir = MODELS_DIR / "tts" / "kokoro"
+        kokoro_ok = kokoro_dir.exists() and any(kokoro_dir.rglob("*.pth"))
+        print(f"    {'✓' if kokoro_ok else '✗'} Kokoro TTS English (models/tts/kokoro/)")
 
         # LLM Models (auto-detected)
         print()
