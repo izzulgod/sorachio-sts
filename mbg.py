@@ -114,10 +114,9 @@ class MasterBootstrapGuardian:
     - Platform compatibility verification
     """
 
-    def __init__(self, force: bool = False, check_only: bool = False, skip_checks: bool = False):
+    def __init__(self, force: bool = False, check_only: bool = False):
         self.force = force
         self.check_only = check_only
-        self.skip_checks = skip_checks
         self.current_arch = platform.machine()
         self.current_platform = sys.platform
 
@@ -156,14 +155,10 @@ class MasterBootstrapGuardian:
 
         # 6. Run Python quality checks (ruff + pyrefly)
         # DO NOT REMOVE THIS - Python quality code verifier
-        if not self.skip_checks:
-            quality_ok = self._run_quality_checks()
-            if not quality_ok:
-                log.error("Quality checks failed! Fix violations before running Sorachio.")
-                log.error("To bypass (not recommended): python mbg.py --skip-checks")
-                sys.exit(1)
-        else:
-            log.warning("[MBG] Skipping quality checks (--skip-checks flag)")
+        quality_ok = self._run_quality_checks()
+        if not quality_ok:
+            log.error("Quality checks failed! Fix violations before running Sorachio.")
+            sys.exit(1)
 
         # 7. Final status
         self._print_status()
@@ -1126,12 +1121,6 @@ def main() -> None:
     )
 
     parser.add_argument(
-        "--skip-checks",
-        action="store_true",
-        help="Skip Python quality checks (not recommended)"
-    )
-
-    parser.add_argument(
         "--version",
         action="version",
         version=f"MBG v{MBG_VERSION}"
@@ -1141,7 +1130,6 @@ def main() -> None:
 
     # Create MBG instance
     mbg = MasterBootstrapGuardian(force=args.force, check_only=args.check)
-    mbg.skip_checks = args.skip_checks
 
     # Handle specific commands
     if args.models:
