@@ -183,8 +183,8 @@ class SorachioPipeline:
 
         # ---- Audio Capture ----
         from audio.capture import AudioCapture
-        from audio.playback import AudioPlayback
         from audio.echo_cancellation import create_aec
+        from audio.playback import AudioPlayback
         audio_cfg = cfg.audio
 
         # Create AEC provider
@@ -268,18 +268,18 @@ class SorachioPipeline:
             log.info(f"[Pipeline] Greeting: {msg!r}")
             # Mute during greeting playback to avoid capturing TTS output
             self._capture.mute()
-            
+
             # Temporarily disable interruption callback so the greeting does not interrupt itself
             old_interrupt_callback = self._capture.interrupt_callback
             self._capture.interrupt_callback = None
-            
+
             greeting_done = asyncio.Event()
-            
+
             async def _on_greeting_done(event_data) -> None:
                 greeting_done.set()
-                
+
             self.bus.subscribe(EventType.PLAYBACK_FINISHED, _on_greeting_done)
-            
+
             try:
                 await self._tts.speak(msg)
                 # Wait for the greeting playback to actually finish completely
@@ -436,11 +436,11 @@ class SorachioPipeline:
         log.info("[Pipeline] Interrupt triggered")
         self._interrupt_event.set()
         self._playback.interrupt()
-        
+
         # Unmute the mic immediately so the barge-in speech can be captured
         if self._capture:
             self._capture.unmute()
-        
+
         # Inject interruption metadata into STM
         if self._stm:
             await self._stm.mark_last_interrupted()

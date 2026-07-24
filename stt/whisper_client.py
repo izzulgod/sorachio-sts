@@ -312,20 +312,20 @@ class WhisperClient:
                 try:
                     _, _, all_probs = self._model.detect_language(audio)
                     probs = dict(all_probs)
-                    
+
                     id_prob = probs.get("id", 0.0)
                     ms_prob = probs.get("ms", 0.0)   # Malay
                     jw_prob = probs.get("jw", 0.0)   # Javanese
                     su_prob = probs.get("su", 0.0)   # Sundanese
                     en_prob = probs.get("en", 0.0)
-                    
+
                     total_id_prob = id_prob + ms_prob + jw_prob + su_prob
-                    
+
                     # Log language detection probabilities
                     log.debug(
                         f"[STT] Candidate probabilities — id/ms/jw/su: {total_id_prob:.3f}, en: {en_prob:.3f}"
                     )
-                    
+
                     # Require a confident threshold (0.15) to route to Indonesian;
                     # otherwise default to English. This prevents static or short English
                     # words from being misrouted and translated to Indonesian.
