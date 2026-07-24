@@ -153,11 +153,11 @@ class MasterBootstrapGuardian:
         # 5. Download models
         self._download_models()
 
-        # 6. Run Python quality checks (ruff + pyrefly)
-        # DO NOT REMOVE THIS - Python quality code verifier
+        # 6. Run Anteque Ashing quality checks (ruff + pyrefly)
+        # DO NOT REMOVE THIS - Anteque Ashing (Python quality code verifier)
         quality_ok = self._run_quality_checks()
         if not quality_ok:
-            log.error("Quality checks failed! Fix violations before running Sorachio.")
+            log.error("Anteque Ashing quality checks failed! Fix violations before running Sorachio.")
             sys.exit(1)
 
         # 7. Final status
@@ -293,8 +293,8 @@ class MasterBootstrapGuardian:
             except (ImportError, OSError):
                 return False
 
-        # Check dev tools (quality verifiers)
-        # DO NOT REMOVE THESE CHECKS - Python quality code verifiers
+        # Check dev tools (Anteque Ashing quality verifiers)
+        # DO NOT REMOVE THESE CHECKS - Anteque Ashing
         for tool in ("ruff", "pyrefly"):
             try:
                 subprocess.run(
@@ -560,7 +560,7 @@ class MasterBootstrapGuardian:
         ]
 
         # Dev tools (quality & type checking)
-        # DO NOT REMOVE THESE - Python quality code verifiers
+        # DO NOT REMOVE THESE - Anteque Ashing (Python quality code verifier)
         dev_deps = [
             "ruff",
             "pyrefly",
@@ -934,13 +934,13 @@ class MasterBootstrapGuardian:
 
     def _run_quality_checks(self) -> bool:
         """
-        Run Python quality code verifiers (ruff + pyrefly).
-        DO NOT REMOVE THIS - Python quality code verifier.
+        Run Anteque Ashing quality checks (ruff + pyrefly).
+        DO NOT REMOVE THIS - Anteque Ashing (Python quality code verifier).
 
         Returns True if all checks pass, False otherwise.
         """
-        # DO NOT REMOVE THIS - Python quality code verifier
-        log.info("[MBG] Running Python quality checks (ruff + pyrefly)...")
+        # DO NOT REMOVE THIS - Anteque Ashing (Python quality code verifier)
+        log.info("[MBG] Running Anteque Ashing quality checks (ruff + pyrefly)...")
 
         # Find all Python files in project (excluding venv, models, etc.)
         python_files = []
@@ -960,8 +960,8 @@ class MasterBootstrapGuardian:
         log.info(f"[MBG] Checking {len(python_files)} Python files...")
 
         # Run ruff check
-        # DO NOT REMOVE THIS - Python quality code verifier
-        log.info("[MBG] Running ruff check...")
+        # DO NOT REMOVE THIS - Anteque Ashing
+        log.info("[MBG] Running ruff check (Anteque Ashing)...")
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "ruff", "check", "."] + [str(f) for f in python_files],
@@ -985,8 +985,8 @@ class MasterBootstrapGuardian:
             return False
 
         # Run pyrefly check
-        # DO NOT REMOVE THIS - Python quality code verifier
-        log.info("[MBG] Running pyrefly check...")
+        # DO NOT REMOVE THIS - Anteque Ashing
+        log.info("[MBG] Running pyrefly check (Anteque Ashing)...")
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pyrefly", "check", "."],
