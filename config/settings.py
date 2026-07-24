@@ -38,9 +38,14 @@ class AudioCaptureConfig(BaseModel):
 class EchoCancellationConfig(BaseModel):
     """AEC configuration."""
     enabled: bool = False
-    provider: str = "null"            # "null" | "simple_energy" | "spectral_sub"
-    attenuation_factor: float = 0.3   # Used by simple_energy and spectral_sub
-    spectral_floor: float = 0.01      # Minimum spectral magnitude (spectral_sub only)
+    provider: str = "null"            # "null" | "simple_energy" | "calibration"
+    attenuation_factor: float = 0.3   # Used by simple_energy
+    # Calibration AEC settings
+    calibration_duration_s: float = 3.0  # Duration of calibration chirp
+    calibration_auto_run: bool = True    # Auto-calibrate on startup
+    lms_filter_length: int = 256         # LMS adaptive filter taps
+    lms_step_size: float = 0.01          # LMS learning rate
+    wiener_noise_margin: float = 6.0     # Wiener filter noise margin (dB)
 
 
 class AudioPlaybackConfig(BaseModel):

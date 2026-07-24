@@ -14,6 +14,7 @@ Interruption flows backwards: VAD → interrupt_event → Personality + TTS + Pl
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from config.settings import SorachioSettings, resolve_path
 from core.events import EventType, get_bus
@@ -233,8 +234,12 @@ class SorachioPipeline:
             aec_provider = create_aec(
                 provider=aec_cfg.provider,
                 attenuation_factor=aec_cfg.attenuation_factor,
-                spectral_floor=aec_cfg.spectral_floor,
                 sample_rate=audio_cfg.capture.sample_rate,
+                # Calibration AEC settings
+                calibration_duration_s=aec_cfg.calibration_duration_s,
+                lms_filter_length=aec_cfg.lms_filter_length,
+                lms_step_size=aec_cfg.lms_step_size,
+                wiener_noise_margin=aec_cfg.wiener_noise_margin,
             )
         else:
             aec_provider = create_aec("null")
@@ -283,8 +288,114 @@ class SorachioPipeline:
         await self._llm_gateway.warm_up(system_prompt=gw_system_prompt)
         await self._llm_personality.warm_up(system_prompt=pc_system_prompt)
 
+        # ---- AEC Calibration ----
+        # Run calibration if enabled and AEC provider supports it
+        if (aec_cfg.enabled and
+            aec_cfg.provider == "calibration" and
+            aec_cfg.calibration_auto_run):
+            await self._calibrate_aec(aec_provider)
+
         log.info("[Pipeline] All components initialized [OK]")
         return True
+
+    async def _calibrate_aec(self, aec_provider) -> None:
+        """
+        Run AEC calibration phase.
+
+        Plays a chirp signal through the speaker while recording from mic,
+        then learns room acoustics for echo cancellation.
+        """
+        from audio.echo_cancellation import CalibrationAEC
+
+        if not isinstance(aec_provider, CalibrationAEC):
+            log.debug("[Pipeline] AEC provider does not support calibration")
+            return
+
+        log.info("[Pipeline] Starting AEC calibration...")
+        log.info("[Pipeline] Please remain silent during calibration")
+
+        # Ensure playback and capture are ready
+        if not self._playback or not self._capture:
+            log.warning("[Pipeline] Playback/Capture not ready for calibration")
+            return
+
+        # Run calibration in a thread to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+
+        def _run_calibration():
+            """Run calibration synchronously."""
+            import time
+
+            import numpy as np
+            import sounddevice as sd
+
+            sample_rate = self.settings.audio.capture.sample_rate
+            cal_duration = self.settings.audio.echo_cancellation.calibration_duration_s
+
+            # Generate chirp signal
+            chirp = aec_provider._generate_chirp()
+            chirp_samples = len(chirp)
+
+            # Play chirp and record simultaneously
+            log.info(f"[Pipeline] Playing calibration chirp ({cal_duration:.1f}s)...")
+
+            # Start recording in a separate thread
+            recorded_data = np.zeros(chirp_samples, dtype=np.float32)
+            recording_done = threading.Event()
+
+            def _record():
+                nonlocal recorded_data
+                try:
+                    recorded = sd.rec(
+                        chirp_samples,
+                        samplerate=sample_rate,
+                        channels=1,
+                        dtype="float32",
+                        device=self._capture.device_index,
+                    )
+                    sd.wait()
+                    recorded_data = recorded[:, 0]
+                except Exception as e:
+                    log.error(f"[Pipeline] Calibration recording failed: {e}")
+                finally:
+                    recording_done.set()
+
+            record_thread = threading.Thread(target=_record, daemon=True)
+            record_thread.start()
+
+            # Small delay to ensure recording has started
+            time.sleep(0.1)
+
+            # Play chirp through speaker
+            try:
+                sd.play(
+                    chirp,
+                    samplerate=sample_rate,
+                    device=self._playback.device_index,
+                    blocking=True,
+                )
+            except Exception as e:
+                log.error(f"[Pipeline] Calibration playback failed: {e}")
+
+            # Wait for recording to complete
+            recording_done.wait(timeout=cal_duration + 2.0)
+
+            # Run calibration analysis
+            calibration_data = aec_provider._analyze_calibration(chirp, recorded_data)
+            aec_provider._calibration = calibration_data
+
+            if calibration_data.is_valid:
+                aec_provider._initialize_lms_filter()
+                log.info(f"[Pipeline] AEC calibration complete — quality={calibration_data.quality_score:.2f}")
+                log.info(f"[Pipeline] Echo delay: {calibration_data.echo_delay_ms:.1f}ms")
+                log.info(f"[Pipeline] Interrupt threshold: {calibration_data.interrupt_threshold:.3f}")
+            else:
+                log.warning("[Pipeline] AEC calibration failed — using default settings")
+
+        try:
+            await loop.run_in_executor(None, _run_calibration)
+        except Exception as e:
+            log.error(f"[Pipeline] AEC calibration error: {e}")
 
     async def run(self) -> None:
         """Start all workers and run until shutdown."""
