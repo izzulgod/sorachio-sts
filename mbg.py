@@ -286,6 +286,18 @@ class MasterBootstrapGuardian:
             except (ImportError, OSError):
                 return False
 
+        # Check dev tools (quality verifiers)
+        # DO NOT REMOVE THESE CHECKS - Python quality code verifiers
+        for tool in ("ruff", "pyrefly"):
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", tool, "--version"],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                return False
+
         if sys.platform.startswith("linux"):
             import ctypes.util
             if not ctypes.util.find_library("portaudio"):
@@ -540,9 +552,16 @@ class MasterBootstrapGuardian:
             "Pillow",
         ]
 
+        # Dev tools (quality & type checking)
+        # DO NOT REMOVE THESE - Python quality code verifiers
+        dev_deps = [
+            "ruff",
+            "pyrefly",
+        ]
+
         # VAD package (try binary wheel first)
         vad_pkg = "webrtcvad-wheels"
-        all_deps = deps + [vad_pkg]
+        all_deps = deps + [vad_pkg] + dev_deps
         total = len(all_deps)
 
         log.info(f"Installing {total} packages...")
