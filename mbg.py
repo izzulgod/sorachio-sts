@@ -24,10 +24,8 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 import urllib.request
 from pathlib import Path
-from typing import Optional
 
 # Force UTF-8 encoding for standard output/error on Windows to prevent encoding crashes
 if sys.platform == "win32":
@@ -102,7 +100,7 @@ log = logging.getLogger("mbg")
 class MasterBootstrapGuardian:
     """
     Master Bootstrap Guardian - Automated Build & Compatibility System.
-    
+
     Handles:
     - Python version checking and relaunching
     - Virtual environment creation
@@ -211,10 +209,10 @@ class MasterBootstrapGuardian:
     def _relaunch_with_compatible_python(self) -> None:
         """Find and relaunch with a compatible Python version."""
         log.info("Searching for compatible Python version...")
-        
+
         for version in range(PYTHON_MAX[1], PYTHON_MIN[1] - 1, -1):
             exe_names = [f"python3.{version}", f"python{version}"]
-            
+
             for exe_name in exe_names:
                 exe_path = shutil.which(exe_name)
                 if exe_path:
@@ -225,7 +223,7 @@ class MasterBootstrapGuardian:
                     except KeyboardInterrupt:
                         pass
                     sys.exit(0)
-        
+
         log.error("No compatible Python version found!")
         sys.exit(1)
 
@@ -286,9 +284,9 @@ class MasterBootstrapGuardian:
         """Create and activate virtual environment."""
         if self._is_in_venv():
             return
-        
+
         log.info("Setting up virtual environment...")
-        
+
         # Get venv Python path
         if os.name == "nt":
             venv_python = VENV_DIR / "Scripts" / "python.exe"
@@ -302,13 +300,13 @@ class MasterBootstrapGuardian:
                 [sys.executable, "-m", "venv", str(VENV_DIR)],
                 check=True
             )
-        
+
         # Get venv Python path
         if os.name == "nt":
             venv_python = VENV_DIR / "Scripts" / "python.exe"
         else:
             venv_python = VENV_DIR / "bin" / "python"
-        
+
         log.info(f"Restarting with venv Python: {venv_python}")
         try:
             subprocess.run([str(venv_python)] + sys.argv)
@@ -384,7 +382,7 @@ class MasterBootstrapGuardian:
         if not sys.platform.startswith("linux"):
             return False
         try:
-            with open("/proc/version", "r") as f:
+            with open("/proc/version") as f:
                 return "microsoft" in f.read().lower()
         except OSError:
             return False
@@ -535,7 +533,7 @@ class MasterBootstrapGuardian:
 
             # webrtcvad-wheels failed → fallback to source build
             if not ok and pkg == "webrtcvad-wheels":
-                log.info(f"  ↳ Falling back to webrtcvad (source build)...")
+                log.info("  ↳ Falling back to webrtcvad (source build)...")
                 ok = self._pip_install_one("webrtcvad", i, total)
 
             if not ok:
@@ -551,13 +549,13 @@ class MasterBootstrapGuardian:
     def _build_binaries(self) -> None:
         """Build external binaries (llama.cpp, whisper.cpp)."""
         log.info("Building binaries...")
-        
+
         BIN_DIR.mkdir(parents=True, exist_ok=True)
         REPOS_DIR.mkdir(parents=True, exist_ok=True)
-        
+
         # Check for required build tools
         self._check_build_tools()
-        
+
         # Build each binary
         for binary_name, config in BINARIES.items():
             self._build_binary(binary_name, config)
@@ -565,7 +563,7 @@ class MasterBootstrapGuardian:
     def _check_build_tools(self) -> None:
         """Check if required build tools are installed."""
         required_tools = ["cmake", "git"]
-        
+
         for tool in required_tools:
             if not shutil.which(tool):
                 log.warning(f"Build tool '{tool}' not found")
@@ -575,13 +573,10 @@ class MasterBootstrapGuardian:
         """Install a build tool using system package manager."""
         log.info(f"Installing {tool}...")
 
-        installed = False
-
         if sys.platform == "darwin":
             # macOS - use Homebrew
             if shutil.which("brew"):
-                result = subprocess.run(["brew", "install", tool], check=False)
-                installed = result.returncode == 0
+                subprocess.run(["brew", "install", tool], check=False)
             else:
                 log.warning("Homebrew not found — cannot auto-install on macOS")
 
@@ -599,8 +594,7 @@ class MasterBootstrapGuardian:
             for cmd, pm_name in pkg_managers:
                 if shutil.which(pm_name):
                     log.info(f"Using package manager: {pm_name}")
-                    result = subprocess.run(["sudo"] + cmd, check=False)
-                    installed = result.returncode == 0
+                    subprocess.run(["sudo"] + cmd, check=False)
                     break
             else:
                 log.warning("No supported package manager found (tried apt-get, dnf, yum, pacman, zypper, apk)")
@@ -620,14 +614,14 @@ class MasterBootstrapGuardian:
         """Build a single binary."""
         binary_path = self._get_binary_path(name)
         repo_path = REPOS_DIR / config["repo"]
-        
+
         # Check if binary is valid
         if not self.force and self._is_binary_valid(binary_path, config["check_args"]):
             log.info(f"{name} is valid, skipping build")
             return
-        
+
         log.info(f"Building {name}...")
-        
+
         # Clone or update repository
         if not repo_path.exists():
             log.info(f"Cloning {config['repo']}...")
@@ -642,10 +636,10 @@ class MasterBootstrapGuardian:
                 capture_output=True,
                 check=True
             )
-        
+
         # Build
         build_dir = repo_path / "build"
-        
+
         # Configure
         build_args = list(config["build_args"])
         if name == "llama-server":
@@ -668,7 +662,7 @@ class MasterBootstrapGuardian:
 
         cmake_args = ["cmake", "-B", str(build_dir)] + build_args
         subprocess.run(cmake_args, cwd=repo_path, check=True)
-        
+
         # Compile
         threads = os.cpu_count() or 1
         log.info(f"Compiling with {threads} threads...")
@@ -677,14 +671,14 @@ class MasterBootstrapGuardian:
             cwd=repo_path,
             check=True
         )
-        
+
         # Copy binary — handle .exe suffix on Windows
         exe_suffix = ".exe" if os.name == "nt" else ""
         if name == "llama-server":
             src_bin = build_dir / "bin" / f"llama-server{exe_suffix}"
         else:  # whisper-cli
             src_bin = build_dir / "bin" / f"main{exe_suffix}"
-        
+
         if src_bin.exists():
             shutil.copy(src_bin, binary_path)
             log.info(f"{name} built successfully")
@@ -699,7 +693,11 @@ class MasterBootstrapGuardian:
                     if result.returncode == 0:
                         log.info(f"{name}: cap_ipc_lock capability set (mlock enabled)")
                     else:
-                        log.warning(f"{name}: could not set cap_ipc_lock — mlock may fail (run: sudo setcap cap_ipc_lock=+ep {binary_path})")
+                        log.warning(
+                            f"{name}: could not set cap_ipc_lock — "
+                            f"mlock may fail "
+                            f"(run: sudo setcap cap_ipc_lock=+ep {binary_path})"
+                        )
                 except Exception as e:
                     log.warning(f"{name}: setcap failed: {e}")
         else:
@@ -732,7 +730,7 @@ class MasterBootstrapGuardian:
                         arch = "x86-64"
                     elif arch == "aarch64":
                         arch = "aarch64"
-                        
+
                     if arch not in result.stdout and self.current_arch not in result.stdout:
                         log.warning(f"Architecture mismatch for {binary_path.name}")
                         return False
@@ -879,42 +877,42 @@ def main() -> None:
         prog="mbg",
         description="MBG: Master Bootstrap Guardian - Automated Build & Compatibility System"
     )
-    
+
     parser.add_argument(
         "--check",
         action="store_true",
         help="Check system status only"
     )
-    
+
     parser.add_argument(
         "--force",
         action="store_true",
         help="Force rebuild/re-download everything"
     )
-    
+
     parser.add_argument(
         "--models",
         action="store_true",
         help="Download models only"
     )
-    
+
     parser.add_argument(
         "--build",
         action="store_true",
         help="Build binaries only"
     )
-    
+
     parser.add_argument(
         "--version",
         action="version",
         version=f"MBG v{MBG_VERSION}"
     )
-    
+
     args = parser.parse_args()
-    
+
     # Create MBG instance
     mbg = MasterBootstrapGuardian(force=args.force, check_only=args.check)
-    
+
     # Handle specific commands
     if args.models:
         mbg._download_models()

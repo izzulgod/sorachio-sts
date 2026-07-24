@@ -104,7 +104,8 @@ class ContextManager:
                 context_parts.append(ltm_text.strip())
         if was_interrupted:
             context_parts.append(
-                "[Context: Your previous response was interrupted by the user. Acknowledge the interruption if natural, and keep your next response brief.]"
+                "[Context: Your previous response was interrupted by the user. "
+                "Acknowledge the interruption if natural, and keep your next response brief.]"
             )
 
         # Merge dynamic context block into the newest user input

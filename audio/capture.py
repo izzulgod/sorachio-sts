@@ -22,7 +22,6 @@ from collections.abc import Callable
 import numpy as np
 import sounddevice as sd
 import webrtcvad
-import datetime
 
 from audio.acoustic_gate import AcousticGate
 from audio.echo_cancellation import AECProvider
@@ -84,7 +83,7 @@ class AudioCapture:
         self.interrupt_event = interrupt_event
         self.interruption_debounce_frames = interruption_debounce_frames
         self._aec = aec
-        
+
         if acoustic_gate_config:
             self._acoustic_gate = AcousticGate(
                 threshold_dbfs=acoustic_gate_config.threshold_dbfs,
@@ -150,7 +149,7 @@ class AudioCapture:
             log.info("[Capture] Calibrating Acoustic Gate noise floor... Please remain silent.")
             duration_s = 0.8
             num_samples = int(self.sample_rate * duration_s)
-            
+
             # Record a short snippet of background noise
             noise_data = sd.rec(
                 num_samples,
@@ -160,14 +159,14 @@ class AudioCapture:
                 device=self.device_index,
             )
             sd.wait()
-            
+
             # Calculate average dBFS of the noise snippet
             from audio.acoustic_gate import compute_dbfs
             dbfs = compute_dbfs(noise_data.tobytes())
-            
+
             # Set threshold to 6.0 dB above the background noise floor, clamped to safe ranges
             calibrated_threshold = max(-50.0, min(-20.0, dbfs + 6.0))
-            
+
             self._acoustic_gate.threshold_dbfs = calibrated_threshold
             log.info(
                 f"[Capture] Calibration complete: Background Noise={dbfs:.1f} dBFS | "
@@ -245,16 +244,16 @@ class AudioCapture:
             indata = (indata * 32767).clip(-32768, 32767).astype(np.int16)
         # Convert to bytes for webrtcvad
         pcm_bytes = indata[:, 0].tobytes() if self.channels == 1 else indata.tobytes()
-        
+
         # AEC processing
         if self._aec:
             pcm_bytes = self._aec.process(pcm_bytes)
-            
+
         # Acoustic Gate processing
         from audio.acoustic_gate import compute_dbfs
         dbfs = compute_dbfs(pcm_bytes)
         gate_result = self._acoustic_gate.gate(pcm_bytes)
-        
+
         if gate_result != self._gate_passed_last:
             self._gate_passed_last = gate_result
             _log_event(f"Acoustic gate state changed: passed={gate_result} (dBFS={dbfs:.2f})", force=True)
@@ -268,7 +267,7 @@ class AudioCapture:
             except queue.Full:
                 _log_event("VAD queue full, dropped sentinel", force=True)
             return  # Frame dropped — below dBFS threshold
-            
+
         try:
             self._raw_queue.put_nowait(pcm_bytes)
             if DEBUG_VERBOSE:
@@ -284,7 +283,6 @@ class AudioCapture:
         active_speech_frames = 0
         interrupt_speech_frames = 0
         max_silent_frames = self.silence_timeout_ms // self.chunk_ms
-        min_speech_frames = self.min_speech_duration_ms // self.chunk_ms
         max_frames = int(self.max_speech_duration_s * 1000 / self.chunk_ms)
 
         # Minimum active speech frames (non-silence) to consider it a real speech turn.
@@ -325,7 +323,7 @@ class AudioCapture:
                         asyncio.run_coroutine_threadsafe(
                             get_bus().emit(EventType.USER_SPEECH_START, source="vad"), self._loop
                         )
-                
+
                 # Check for interrupt (speech during TTS playback)
                 if (self.playback_active_event and
                         self.playback_active_event.is_set() and
@@ -350,7 +348,11 @@ class AudioCapture:
                 silent_frames = 0
                 active_speech_frames += 1
                 if DEBUG_VERBOSE:
-                    _log_event(f"speech_frames={len(speech_frames)}, silent_frames={silent_frames}, active={active_speech_frames}")
+                    _log_event(
+                        f"speech_frames={len(speech_frames)}, "
+                        f"silent_frames={silent_frames}, "
+                        f"active={active_speech_frames}"
+                    )
 
                 # Max duration exceeded — flush now
                 if len(speech_frames) >= max_frames:
@@ -371,10 +373,18 @@ class AudioCapture:
                         # Append digital silence to preserve timing for STT
                         speech_frames.append(b'\x00' * (self._frame_size * 2))
                     if DEBUG_VERBOSE:
-                        _log_event(f"speech_frames={len(speech_frames)}, silent_frames={silent_frames}, active={active_speech_frames}")
+                        _log_event(
+                            f"speech_frames={len(speech_frames)}, "
+                            f"silent_frames={silent_frames}, "
+                            f"active={active_speech_frames}"
+                        )
 
                     if silent_frames >= max_silent_frames:
-                        _log_event(f"VAD state: Speech ended. STT Flush triggered (silent_frames={silent_frames})", force=True)
+                        _log_event(
+                            f"VAD state: Speech ended. "
+                            f"STT Flush triggered (silent_frames={silent_frames})",
+                            force=True,
+                        )
                         # End of utterance
                         self._flush_speech(speech_frames, active_speech_frames, min_active_speech_frames)
                         speech_frames = []
@@ -392,13 +402,18 @@ class AudioCapture:
     def _flush_speech(self, frames: list[bytes], active_speech_frames: int, min_active_speech_frames: int) -> None:
         """Send accumulated speech frames to STT queue."""
         if DEBUG_VERBOSE:
-            _log_event(f"_flush_speech: total frames={len(frames)}, active speech frames={active_speech_frames}, min_required_active={min_active_speech_frames}")
-        
+            _log_event(
+                f"_flush_speech: total frames={len(frames)}, "
+                f"active speech frames={active_speech_frames}, "
+                f"min_required_active={min_active_speech_frames}"
+            )
+
         # Guard: Discard clicks, pops, static spikes that lack vocal duration
         if active_speech_frames < min_active_speech_frames:
             _log_event(
-                f"_flush_speech discarded: too few active speech frames ({active_speech_frames} < {min_active_speech_frames})",
-                force=True
+                f"_flush_speech discarded: too few active speech frames "
+                f"({active_speech_frames} < {min_active_speech_frames})",
+                force=True,
             )
             log.debug(f"[VAD] Too few active frames ({active_speech_frames}) — discarding noise/pop")
             return
@@ -417,7 +432,7 @@ class AudioCapture:
 
         # ── Mute gate: discard audio while pipeline is busy ──────────
         if self._muted.is_set():
-            _log_event(f"_flush_speech discarded: pipeline muted", force=True)
+            _log_event("_flush_speech discarded: pipeline muted", force=True)
             log.debug(f"[VAD] Muted — discarding {len(frames)} frames")
             return
 

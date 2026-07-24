@@ -53,23 +53,36 @@ DEFAULT_DECISION: dict[str, Any] = {
 SYSTEM_PROMPT = """You are a cognitive routing layer for an AI companion named Sorachio.
 Output ONLY valid minified JSON. No explanations, no markdown.
 
-Schema: {"respond": boolean, "topic": string, "emotion": string, "store_memory": boolean, "importance": float, "memory_queries": list}
+Schema: {"respond": boolean, "topic": string, "emotion": string,
+"store_memory": boolean, "importance": float, "memory_queries": list}
 
 Rules:
 - respond=false: background noise, other people talking, filler words (um, wait, hmm).
 - respond=true: greetings, questions, commands, or direct speech addressed to you.
-- topic: short label (e.g. greeting, focus, origin, general). Use "visual_analysis" if user asks to look/see/watch something.
+- topic: short label (e.g. greeting, focus, origin, general).
+  Use "visual_analysis" if user asks to look/see/watch something.
 - emotion: neutral|happy|sad|anxious|frustrated|excited|confused|tired
-- store_memory=true ONLY for important personal facts, preferences, goals about the USER. False for small talk, greetings, questions about Sorachio.
+- store_memory=true ONLY for important personal facts, preferences,
+  goals about the USER. False for small talk, greetings, questions about Sorachio.
 - importance: 0.0–1.0
 - memory_queries: up to 2 search keywords, empty list if not needed.
 
 Examples:
-"Hey, stressed about exams." → {"respond":true,"topic":"exams","emotion":"anxious","store_memory":true,"importance":0.8,"memory_queries":["exams","stress"]}
-"Hey Mom, turn off the TV." → {"respond":false,"topic":"general","emotion":"neutral","store_memory":false,"importance":0.1,"memory_queries":[]}
-"Who made you?" → {"respond":true,"topic":"origin","emotion":"neutral","store_memory":false,"importance":0.2,"memory_queries":[]}
-"Look at this, what is it?" → {"respond":true,"topic":"visual_analysis","emotion":"curious","store_memory":false,"importance":0.5,"memory_queries":[]}
-"Umm... wait..." → {"respond":false,"topic":"general","emotion":"neutral","store_memory":false,"importance":0.1,"memory_queries":[]}
+"Hey, stressed about exams."
+→ {"respond":true,"topic":"exams","emotion":"anxious",
+   "store_memory":true,"importance":0.8,"memory_queries":["exams","stress"]}
+"Hey Mom, turn off the TV."
+→ {"respond":false,"topic":"general","emotion":"neutral",
+   "store_memory":false,"importance":0.1,"memory_queries":[]}
+"Who made you?"
+→ {"respond":true,"topic":"origin","emotion":"neutral",
+   "store_memory":false,"importance":0.2,"memory_queries":[]}
+"Look at this, what is it?"
+→ {"respond":true,"topic":"visual_analysis","emotion":"curious",
+   "store_memory":false,"importance":0.5,"memory_queries":[]}
+"Umm... wait..."
+→ {"respond":false,"topic":"general","emotion":"neutral",
+   "store_memory":false,"importance":0.1,"memory_queries":[]}
 
 Output ONLY valid JSON."""
 
@@ -375,9 +388,12 @@ class CognitiveGateway:
                 # Basic enum validation
                 if key == "priority" and value not in ("low", "medium", "high"):
                     value = "medium"
-                elif key == "speech_type" and value not in ("direct_address", "background", "filler", "ambient", "conversation"):
+                elif key == "speech_type" and value not in (
+                    "direct_address", "background", "filler",
+                    "ambient", "conversation",
+                ):
                     value = "direct_address"
-                
+
                 result[key] = value
 
         # If the model explicitly set respond=False, trust it unless it's a high priority direct address

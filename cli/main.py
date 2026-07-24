@@ -504,8 +504,6 @@ class VoiceCLI:
         memory           = decision.get("store_memory",     False)
         topic            = decision.get("topic",            "general")
         priority         = decision.get("priority",         "medium")
-        speech_type      = decision.get("speech_type",      "direct_address")
-        social_attention = decision.get("social_attention", 0.5)
 
         icon, emo_color = self._EMOTION_ICON.get(emotion, ("○", "bright_black"))
 
@@ -565,14 +563,14 @@ class VoiceCLI:
         else:
             intent_str = "respond" if respond else "ignore"
             mem_str = "true" if memory else "false"
-            
+
             console.print("\n[bold magenta]Cognition[/bold magenta]")
             console.print(f"├─ mood        {emotion}")
             console.print(f"├─ intent      {intent_str}")
             console.print(f"├─ energy      {priority}")
             console.print(f"├─ memory      {mem_str}")
             console.print(f"└─ topic       {topic}\n")
-            
+
             if not respond:
                 console.print("[dim][ IGNORED ][/dim]")
                 console.print("[dim]Low-priority input filtered by cognitive layer.[/dim]\n")
