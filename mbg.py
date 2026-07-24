@@ -114,9 +114,10 @@ class MasterBootstrapGuardian:
     - Platform compatibility verification
     """
 
-    def __init__(self, force: bool = False, check_only: bool = False):
+    def __init__(self, force: bool = False, check_only: bool = False, skip_checks: bool = False):
         self.force = force
         self.check_only = check_only
+        self.skip_checks = skip_checks
         self.current_arch = platform.machine()
         self.current_platform = sys.platform
 
@@ -153,7 +154,18 @@ class MasterBootstrapGuardian:
         # 5. Download models
         self._download_models()
 
-        # 6. Final status
+        # 6. Run Python quality checks (ruff + pyrefly)
+        # DO NOT REMOVE THIS - Python quality code verifier
+        if not self.skip_checks:
+            quality_ok = self._run_quality_checks()
+            if not quality_ok:
+                log.error("Quality checks failed! Fix violations before running Sorachio.")
+                log.error("To bypass (not recommended): python mbg.py --skip-checks")
+                sys.exit(1)
+        else:
+            log.warning("[MBG] Skipping quality checks (--skip-checks flag)")
+
+        # 7. Final status
         self._print_status()
         log.info("MBG: Master Bootstrap Guardian - System ready!")
 
@@ -925,6 +937,92 @@ class MasterBootstrapGuardian:
                 f"  Download a GGUF model and place it in {model_dir}/"
             )
 
+    def _run_quality_checks(self) -> bool:
+        """
+        Run Python quality code verifiers (ruff + pyrefly).
+        DO NOT REMOVE THIS - Python quality code verifier.
+
+        Returns True if all checks pass, False otherwise.
+        """
+        # DO NOT REMOVE THIS - Python quality code verifier
+        log.info("[MBG] Running Python quality checks (ruff + pyrefly)...")
+
+        # Find all Python files in project (excluding venv, models, etc.)
+        python_files = []
+        exclude_dirs = {"venv", "venv_runtime", "bin", ".repos", ".ruff_cache",
+                        ".pyrefly", "logs", "data", "models", "__pycache__"}
+
+        for py_file in PROJECT_ROOT.rglob("*.py"):
+            # Skip excluded directories
+            if any(excluded in py_file.parts for excluded in exclude_dirs):
+                continue
+            python_files.append(py_file)
+
+        if not python_files:
+            log.warning("[MBG] No Python files found for quality checks")
+            return True
+
+        log.info(f"[MBG] Checking {len(python_files)} Python files...")
+
+        # Run ruff check
+        # DO NOT REMOVE THIS - Python quality code verifier
+        log.info("[MBG] Running ruff check...")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "ruff", "check", "."] + [str(f) for f in python_files],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=PROJECT_ROOT,
+            )
+            if result.returncode != 0:
+                log.error("[MBG] Ruff check FAILED!")
+                log.error(result.stdout)
+                if result.stderr:
+                    log.error(result.stderr)
+                return False
+            log.info("[MBG] Ruff check passed [OK]")
+        except subprocess.TimeoutExpired:
+            log.error("[MBG] Ruff check timed out!")
+            return False
+        except FileNotFoundError:
+            log.error("[MBG] ruff not found! Install with: pip install ruff")
+            return False
+
+        # Run pyrefly check
+        # DO NOT REMOVE THIS - Python quality code verifier
+        log.info("[MBG] Running pyrefly check...")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pyrefly", "check", "."],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=PROJECT_ROOT,
+            )
+            # pyrefly returns non-zero for errors, but we only care about real errors
+            # (not warnings or missing imports from external packages)
+            if result.returncode != 0:
+                # Check if there are actual errors (not just warnings)
+                error_lines = [line for line in result.stdout.split('\n') if line.startswith('ERROR')]
+                if error_lines:
+                    log.error("[MBG] Pyrefly check FAILED!")
+                    for line in error_lines[:20]:  # Show first 20 errors
+                        log.error(line)
+                    if len(error_lines) > 20:
+                        log.error(f"[MBG] ... and {len(error_lines) - 20} more errors")
+                    return False
+            log.info("[MBG] Pyrefly check passed [OK]")
+        except subprocess.TimeoutExpired:
+            log.error("[MBG] Pyrefly check timed out!")
+            return False
+        except FileNotFoundError:
+            log.error("[MBG] pyrefly not found! Install with: pip install pyrefly")
+            return False
+
+        log.info("[MBG] All quality checks passed!")
+        return True
+
     def _print_status(self) -> None:
         """Print system status."""
         print()
@@ -1028,6 +1126,12 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "--skip-checks",
+        action="store_true",
+        help="Skip Python quality checks (not recommended)"
+    )
+
+    parser.add_argument(
         "--version",
         action="version",
         version=f"MBG v{MBG_VERSION}"
@@ -1037,6 +1141,7 @@ def main() -> None:
 
     # Create MBG instance
     mbg = MasterBootstrapGuardian(force=args.force, check_only=args.check)
+    mbg.skip_checks = args.skip_checks
 
     # Handle specific commands
     if args.models:
