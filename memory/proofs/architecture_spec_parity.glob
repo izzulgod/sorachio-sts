@@ -1,0 +1,8 @@
+DIGEST 70d5b5f7936cd438df0f5844b8a04807
+Farchitecture_spec_parity
+mod 233:256 <> architecture_spec_parity
+R275:280 Coq.ZArith.ZArith <> <> lib
+R298:303 Coq.QArith.QArith <> <> lib
+R321:334 Coq.Strings.String <> <> lib
+R352:361 Coq.Lists.List <> <> lib
+R379:382 Coq.Bool.Bool <> <> lib

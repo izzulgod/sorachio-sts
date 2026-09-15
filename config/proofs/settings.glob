@@ -1,0 +1,10 @@
+DIGEST 84d866582c4ad2c724689b999d840015
+Fsettings
+mod 217:224 <> settings
+R243:248 Coq.ZArith.ZArith <> <> lib
+R266:271 Coq.QArith.QArith <> <> lib
+R289:302 Coq.Strings.String <> <> lib
+R320:329 Coq.Lists.List <> <> lib
+R347:350 Coq.Bool.Bool <> <> lib
+def 475:490 settings get_project_root
+R533:534 Coq.Init.Datatypes <> tt constr

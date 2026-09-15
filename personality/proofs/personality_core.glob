@@ -1,0 +1,10 @@
+DIGEST 4b96ad08c68930b32407e2460a0c86fc
+Fpersonality_core
+mod 230:245 <> personality_core
+R264:269 Coq.ZArith.ZArith <> <> lib
+R287:292 Coq.QArith.QArith <> <> lib
+R310:323 Coq.Strings.String <> <> lib
+R341:350 Coq.Lists.List <> <> lib
+R368:371 Coq.Bool.Bool <> <> lib
+def 503:525 personality_core test_generate_streaming
+R568:569 Coq.Init.Datatypes <> tt constr

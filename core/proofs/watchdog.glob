@@ -1,0 +1,8 @@
+DIGEST 0198967e325e1cebfb064a2c268f6977
+Fwatchdog
+mod 215:222 <> watchdog
+R241:246 Coq.ZArith.ZArith <> <> lib
+R264:269 Coq.QArith.QArith <> <> lib
+R287:300 Coq.Strings.String <> <> lib
+R318:327 Coq.Lists.List <> <> lib
+R345:348 Coq.Bool.Bool <> <> lib

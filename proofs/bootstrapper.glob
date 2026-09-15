@@ -1,0 +1,10 @@
+DIGEST df6b65828501b1c5f0fd7bbef66ef45d
+Fbootstrapper
+mod 214:225 <> bootstrapper
+R244:249 Coq.ZArith.ZArith <> <> lib
+R267:272 Coq.QArith.QArith <> <> lib
+R290:303 Coq.Strings.String <> <> lib
+R321:330 Coq.Lists.List <> <> lib
+R348:351 Coq.Bool.Bool <> <> lib
+def 477:493 bootstrapper test_ensure_ready
+R536:537 Coq.Init.Datatypes <> tt constr

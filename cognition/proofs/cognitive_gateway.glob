@@ -1,0 +1,10 @@
+DIGEST acebb7f9c236a62871344e5d8c21fb65
+Fcognitive_gateway
+mod 229:245 <> cognitive_gateway
+R264:269 Coq.ZArith.ZArith <> <> lib
+R287:292 Coq.QArith.QArith <> <> lib
+R310:323 Coq.Strings.String <> <> lib
+R341:350 Coq.Lists.List <> <> lib
+R368:371 Coq.Bool.Bool <> <> lib
+def 492:503 cognitive_gateway test_analyze
+R546:547 Coq.Init.Datatypes <> tt constr

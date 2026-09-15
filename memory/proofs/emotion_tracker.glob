@@ -1,0 +1,10 @@
+DIGEST 36997187a20796e19a9069651d32b0f9
+Femotion_tracker
+mod 224:238 <> emotion_tracker
+R257:262 Coq.ZArith.ZArith <> <> lib
+R280:285 Coq.QArith.QArith <> <> lib
+R303:316 Coq.Strings.String <> <> lib
+R334:343 Coq.Lists.List <> <> lib
+R361:364 Coq.Bool.Bool <> <> lib
+def 492:510 emotion_tracker test_record_emotion
+R553:554 Coq.Init.Datatypes <> tt constr

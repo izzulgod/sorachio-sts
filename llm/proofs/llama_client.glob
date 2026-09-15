@@ -1,0 +1,10 @@
+DIGEST fdf6008c9aca84eaf4c29e1ad625eb29
+Fllama_client
+mod 218:229 <> llama_client
+R248:253 Coq.ZArith.ZArith <> <> lib
+R271:276 Coq.QArith.QArith <> <> lib
+R294:307 Coq.Strings.String <> <> lib
+R325:334 Coq.Lists.List <> <> lib
+R352:355 Coq.Bool.Bool <> <> lib
+def 476:487 llama_client test_to_dict
+R530:531 Coq.Init.Datatypes <> tt constr

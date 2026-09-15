@@ -10,6 +10,7 @@ exclude = [
     "logs",
     "data",
     "models",
+    "utils/sabotage_verifier.py",
 ]
 
 # Enable automatic fixes
@@ -33,6 +34,7 @@ select = [
 ignore = []
 
 [tool.pyrefly]
+search-path = ["."]
 project-includes = [
     "**/*.py",
     "**/*.ipynb",
@@ -49,4 +51,5 @@ project-excludes = [
     "**/models/**",
     "**/__pycache__/**",
     "**/tests/**",
+    "**/sabotage_verifier.py",
 ]

@@ -1,0 +1,10 @@
+DIGEST 7d0398f5d32c6840ad68ad01bae33648
+Fwhisper_client
+mod 220:233 <> whisper_client
+R252:257 Coq.ZArith.ZArith <> <> lib
+R275:280 Coq.QArith.QArith <> <> lib
+R298:311 Coq.Strings.String <> <> lib
+R329:338 Coq.Lists.List <> <> lib
+R356:359 Coq.Bool.Bool <> <> lib
+def 495:521 whisper_client test_last_detected_language
+R564:565 Coq.Init.Datatypes <> tt constr

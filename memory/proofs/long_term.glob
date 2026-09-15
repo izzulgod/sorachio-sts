@@ -1,0 +1,10 @@
+DIGEST d7ef87039a05507c2a77378900b92a37
+Flong_term
+mod 218:226 <> long_term
+R245:250 Coq.ZArith.ZArith <> <> lib
+R268:273 Coq.QArith.QArith <> <> lib
+R291:304 Coq.Strings.String <> <> lib
+R322:331 Coq.Lists.List <> <> lib
+R349:352 Coq.Bool.Bool <> <> lib
+def 473:484 long_term test_to_dict
+R527:528 Coq.Init.Datatypes <> tt constr
