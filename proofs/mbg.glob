@@ -1,0 +1,10 @@
+DIGEST b2b882e6e5817b689350826e594af547
+Fmbg
+mod 205:207 <> mbg
+R226:231 Coq.ZArith.ZArith <> <> lib
+R249:254 Coq.QArith.QArith <> <> lib
+R272:285 Coq.Strings.String <> <> lib
+R303:312 Coq.Lists.List <> <> lib
+R330:333 Coq.Bool.Bool <> <> lib
+def 446:449 mbg main
+R492:493 Coq.Init.Datatypes <> tt constr

@@ -1,0 +1,10 @@
+DIGEST ed7efdd7c671eb1d81162840b23ad668
+Fpiper_client
+mod 218:229 <> piper_client
+R248:253 Coq.ZArith.ZArith <> <> lib
+R271:276 Coq.QArith.QArith <> <> lib
+R294:307 Coq.Strings.String <> <> lib
+R325:334 Coq.Lists.List <> <> lib
+R352:355 Coq.Bool.Bool <> <> lib
+def 479:493 piper_client test_initialize
+R536:537 Coq.Init.Datatypes <> tt constr

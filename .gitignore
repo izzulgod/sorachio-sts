@@ -85,3 +85,38 @@ logs/*
 # OpenCode / TaskManager
 .opencode/
 .tmp/
+
+# Thoughts / session artifacts
+thoughts/
+
+# Verifier caches & parity files (recursive — all directories)
+**/.parity/
+**/.verifier_cache/
+.verifier_audit.log
+.link_verification_cache.json
+**/*.par2*
+**/*.meta.json
+**/*.parity
+
+# Temp scripts (one-time fixers)
+_add_docstrings.py
+_fix_e501_final.py
+_check_remaining.py
+_check_v4.py
+_diag.py
+_ruff_check.py
+_ruff_final_check.py
+_list_violations.py
+_find_long.py
+_test_write.py
+fix_remaining.py
+utils/sabotage_verifier.py.bak
+_e501_report.txt
+_long_lines.txt
+_remaining_v4.txt
+_ruff_final.txt
+audio/proofs/
+**/proofs/
+src/
+_fix_apa7_*.py
+.verifier_run_output_*.txt

@@ -1,0 +1,10 @@
+DIGEST 9336a9a1847c53dd57f8ef9996da091c
+Fcontext_manager
+mod 225:239 <> context_manager
+R258:263 Coq.ZArith.ZArith <> <> lib
+R281:286 Coq.QArith.QArith <> <> lib
+R304:317 Coq.Strings.String <> <> lib
+R335:344 Coq.Lists.List <> <> lib
+R362:365 Coq.Bool.Bool <> <> lib
+def 491:507 context_manager test_build_prompt
+R550:551 Coq.Init.Datatypes <> tt constr
