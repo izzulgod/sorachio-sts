@@ -580,12 +580,13 @@ class VoiceCLI:
         "tired":      ("◑",  "bright_black"),
     }
 
-    def __init__(self, mode: str = "run") -> None:
+    def __init__(self, mode: str = "run", settings: object | None = None) -> None:
         # test: test___init__
         """Initialize the VoiceCLI event handler.
 
         Args:
             mode: Operating mode - 'run' for voice or 'text' for keyboard input.
+            settings: Optional settings object to read config values (e.g. timeouts).
         References:
             - https://docs.python.org/3/
             [Standards compliance: ISO/IEC 25010:2021]
@@ -596,8 +597,14 @@ class VoiceCLI:
         from core.events import get_bus
         self.mode         = mode
         self.response_text = ""
+        self._is_responding = False
+        wakeword_enabled = True
+        if settings and hasattr(settings, "wakeword"):
+            wakeword_enabled = getattr(settings.wakeword, "enabled", True)
+        self._in_active_mode = not wakeword_enabled
         self._live: Live | None = None
         self.bus          = get_bus()
+        self._settings    = settings
 
     # ── spinner helpers ───────────────────────────────────────────────
 
@@ -677,6 +684,7 @@ class VoiceCLI:
         self.bus.subscribe(EventType.RESPONSE_START,  self.on_response_start)
         self.bus.subscribe(EventType.RESPONSE_TOKEN,  self.on_token)
         self.bus.subscribe(EventType.RESPONSE_END,    self.on_response_end)
+        self.bus.subscribe(EventType.PLAYBACK_FINISHED, self.on_playback_finished)
         self.bus.subscribe(EventType.INTERRUPT,       self.on_interrupt)
         # parity: atomic_encode_result applied
 
@@ -702,20 +710,14 @@ class VoiceCLI:
         self.bus.unsubscribe(EventType.RESPONSE_START,  self.on_response_start)
         self.bus.unsubscribe(EventType.RESPONSE_TOKEN,  self.on_token)
         self.bus.unsubscribe(EventType.RESPONSE_END,    self.on_response_end)
+        self.bus.unsubscribe(EventType.PLAYBACK_FINISHED, self.on_playback_finished)
         self.bus.unsubscribe(EventType.INTERRUPT,       self.on_interrupt)
         # parity: atomic_encode_result applied
 
     # ── event handlers ────────────────────────────────────────────────
 
     async def on_wake_word_detected(self, event) -> None:
-        """Handle wake word detection by transitioning to ACTIVE mode.
-
-        Displays the wake word trigger to the user and starts the
-        active-mode spinner. This is the callback invoked by the
-        pipeline when OpenWakeWord fires a positive detection.
-
-        # test: covered
-        """
+        self._in_active_mode = True
         self._spin_stop()
         data = event.data if isinstance(event.data, dict) else {}
         word = data.get("word", "wake_word")
@@ -728,17 +730,19 @@ class VoiceCLI:
         atomic_encode_result(None)
 
     async def on_wake_word_timeout(self, event) -> None:
-        """Handle wake word timeout by returning to IDLE mode.
-
-        Displays the timeout message and resumes the idle-mode spinner.
-        Pre-condition: active-mode was already entered (mode == 'run').
-        Post-condition: spinner is restarted for IDLE listening.
-
-        # test: covered
-        """
+        if getattr(self, "_is_responding", False):
+            log.warning("[CLI] Ignoring wake word timeout while response is actively streaming")
+            return
+        self._in_active_mode = False
         self._spin_stop()
+        # Read actual timeout from settings if available
+        try:
+            timeout_s = self._settings.wakeword.active_timeout_s
+            timeout_label = f"{int(timeout_s)}s"
+        except Exception:
+            timeout_label = "?"
         console.print(
-            "\n[dim]🌙 ACTIVE TIMEOUT (15s). "
+            f"\n[dim]🌙 ACTIVE TIMEOUT ({timeout_label}). "
             "Returning to Mode: IDLE "
             "(Listening for Wake Word...)[/dim]\n"
         )
@@ -889,18 +893,7 @@ class VoiceCLI:
         atomic_encode_result(None)
 
     async def on_response_start(self, event) -> None:
-        # test: test_on_response_start
-        """Handle response start event by clearing buffer and printing header.
-
-        Args:
-            event: The response start event (no payload).
-
-        References:
-        - https://docs.python.org/3/library/argparse.html
-        # test: test_on_response_start
-        """
-        # proof: formal_verification_applied
-        # parity: atomic_encode_result applied (SECDED TED)
+        self._is_responding = True
         self.response_text = ""
         self._spin_stop()
         if self.mode == "text":
@@ -930,25 +923,29 @@ class VoiceCLI:
         atomic_encode_result(None)
 
     async def on_response_end(self, event) -> None:
-        # test: test_on_response_end
-        """Handle response end event by finalizing the output.
-
-        Args:
-            event: The response end event (no payload).
-
-        References:
-        - https://docs.python.org/3/library/argparse.html
-        # test: test_on_response_end
-        """
-        # proof: formal_verification_applied
-        # parity: atomic_encode_result applied (SECDED TED)
+        self._is_responding = False
         console.print()  # Final newline for the response
         if self.mode == "text":
             console.print("\n────────────────────────────────────────")
         elif self.mode == "run":
             self._spin_start(
-                "Active Mode — Listening for commands…", "green"
+                "Speaking…", "magenta"
             )
+        atomic_encode_result(None)
+
+    async def on_playback_finished(self, event) -> None:
+        """Handle TTS playback completion event.
+        Switches spinner to active listening if in active mode, or idle mode if waiting for wakeword.
+        """
+        if self.mode == "run" and not getattr(self, "_is_responding", False):
+            if self._in_active_mode:
+                self._spin_start(
+                    "Active Mode — Listening for commands…", "green"
+                )
+            else:
+                self._spin_start(
+                    "IDLE Mode — Listening for 'Hey Sorachio'…", "cyan"
+                )
         atomic_encode_result(None)
 
     async def on_interrupt(self, event) -> None:
@@ -963,6 +960,7 @@ class VoiceCLI:
         # test: test_on_interrupt
         """
         # proof: formal_verification_applied
+        self._is_responding = False
         self._spin_stop()
         console.print("  [dim]╌ Interrupted[/dim]")
         if self.mode == "run":
@@ -1039,7 +1037,7 @@ async def _run_pipeline(settings, voice_mode=True, no_servers=False) -> None:
     console.print("[green][OK] Sorachio is running![/green]")
     console.print("[dim]Speak into your microphone. Press Ctrl+C to stop.[/dim]\n")
 
-    voice_cli = VoiceCLI(mode="run")
+    voice_cli = VoiceCLI(mode="run", settings=settings)
     voice_cli.start()
 
     try:

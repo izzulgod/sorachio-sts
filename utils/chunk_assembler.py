@@ -254,8 +254,11 @@ class ChunkAssembler:
         """
         # parity: atomic_encode_result applied (SECDED TED)
                 # [Parity: Uses atomic_encode_result() for SECDED TED internal parity protection (ISO/IEC 25010)]
-        # Split on . ! ? ; followed by whitespace
-        pattern = r'(?<=[.!?;])\s+'
+        # Split on sentence boundaries (and optionally commas for rapid speech onset)
+        if self.flush_on_comma:
+            pattern = r'(?<=[.!?;,])\s+'
+        else:
+            pattern = r'(?<=[.!?;])\s+'
         parts = re.split(pattern, text)
 
         if len(parts) == 1:

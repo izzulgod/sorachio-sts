@@ -624,9 +624,15 @@ class AudioCapture:
         import time
 
         while self._running:
-            # Refresh active mode timer continuously during TTS playback so timeout countdown
-            # only starts ticking AFTER TTS playback completes.
-            if self.playback_active_event and self.playback_active_event.is_set():
+            # Refresh active mode timer continuously during TTS playback, pipeline processing (mic muted),
+            # or speech capture, so timeout countdown ONLY starts ticking AFTER TTS playback completes
+            # and mic is listening for new user speech.
+            is_pipeline_busy = (
+                self._muted.is_set()
+                or (self.playback_active_event and self.playback_active_event.is_set())
+                or triggered
+            )
+            if is_pipeline_busy:
                 self._last_active_time = time.time()
 
             try:
@@ -636,7 +642,7 @@ class AudioCapture:
             except queue.Empty:
                 # Still check timeout on empty queue iterations
                 if self.wakeword_enabled and self.mode == "ACTIVE" and self._last_active_time > 0:
-                    if (time.time() - self._last_active_time) > self.active_timeout_s:
+                    if not is_pipeline_busy and (time.time() - self._last_active_time) > self.active_timeout_s:
                         log.info(f"[Capture] Active timeout ({self.active_timeout_s}s) -> Returning to IDLE mode")
                         self.transition_to_idle()
                         if self._loop:
@@ -679,7 +685,7 @@ class AudioCapture:
 
             # ── Active Mode Inactivity Timeout Check ────────────────
             if self.wakeword_enabled and self.mode == "ACTIVE" and self._last_active_time > 0:
-                if (time.time() - self._last_active_time) > self.active_timeout_s:
+                if not is_pipeline_busy and (time.time() - self._last_active_time) > self.active_timeout_s:
                     log.info(f"[Capture] Active timeout ({self.active_timeout_s}s) -> Returning to IDLE mode")
                     self.transition_to_idle()
                     if self._loop:
@@ -775,6 +781,7 @@ class AudioCapture:
             else:
                 interrupt_speech_frames = 0
                 if triggered:
+                    self._last_active_time = time.time()
                     silent_frames += 1
                     if pcm:
                         speech_frames.append(pcm)
@@ -872,6 +879,7 @@ class AudioCapture:
             log.debug(f"[VAD] Muted — discarding {len(frames)} frames")
             return
 
+        self.touch_active_time()
         _log_event(f"STT enqueue: Putting {len(audio_bytes)} bytes into stt_queue", force=True)
         log.info(f"[VAD] ✓ Flushing speech: {len(frames)} frames, {duration_s:.1f}s, {len(audio_bytes)} bytes")
 

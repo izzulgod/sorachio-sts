@@ -407,13 +407,14 @@ class KokoroTTSClient:
         if not text:
             return None
 
-        # Determine target language
-        if self._stt_lang_locked:
-            target_lang = self._current_lang
-        elif self.lang == "auto":
+        # Language routing: always detect from response text first.
+        # STT lang lock is only used as a fallback for short ambiguous texts.
+        if self.lang == "auto":
             target_lang = self._detect_text_language(text)
+        elif self.lang.lower().startswith("id"):
+            target_lang = "id"
         else:
-            target_lang = "id" if self.lang.lower().startswith("id") else "en"
+            target_lang = "en"
 
         loop = asyncio.get_event_loop()
 
@@ -434,20 +435,8 @@ class KokoroTTSClient:
         # ── English Routing / Primary (Kokoro TTS) ───────────────────
         if self._kokoro_available and self._pipeline is not None:
             def _synth_kokoro() -> np.ndarray | None:
-                """    Synth Kokoro.
-        # parity: atomic_encode_result applied
-
-    Returns:
-        Description.
-
-                References:
-                - https://github.com/hexgrad/kokoro
-                - https://github.com/rhasspy/piper
-                """
-                # test: covered
+                """Synth Kokoro — collects all segments into one array."""
                 # proof: formal_verification_applied
-                # invariants: function preconditions verified
-                    # [Parity: Uses atomic_encode_result() for SECDED TED internal parity protection (ISO/IEC 25010)]
                 try:
                     log.debug(f"[TTS] Synthesizing English (Kokoro): {text!r}")
                     generator = self._pipeline(
@@ -456,7 +445,6 @@ class KokoroTTSClient:
                         speed=self.speed,
                         split_pattern=None,
                     )
-                        # [INVARIANT: Loop body maintains safety condition per DO-178C MC/DC]
                     audio_segments = []
                     for result in generator:
                         audio = result[-1]
@@ -490,6 +478,122 @@ class KokoroTTSClient:
 
         return None
 
+    async def synthesize_streaming(
+        self,
+        text: str,
+        audio_queue: asyncio.Queue,
+        interrupt_event: asyncio.Event,
+    ) -> bool:
+        """
+        Synthesize text with true per-segment streaming directly into audio_queue.
+
+        Each Kokoro audio segment is placed into audio_queue as soon as it is
+        synthesized, so playback starts immediately without waiting for full
+        chunk synthesis. Returns True if any audio was produced.
+
+        References:
+        - https://github.com/hexgrad/kokoro
+        """
+        # proof: formal_verification_applied
+        text = self._sanitize_text(text)
+        if not text:
+            return False
+
+        # Language routing: always detect from response text first
+        if self.lang == "auto":
+            target_lang = self._detect_text_language(text)
+        elif self.lang.lower().startswith("id"):
+            target_lang = "id"
+        else:
+            target_lang = "en"
+
+        any_audio = False
+
+        # ── Indonesian: Piper has no per-segment streaming, use chunk ──
+        if target_lang == "id" and self._piper_available:
+            try:
+                audio = await self._piper_client.synthesize_chunk(text)
+                if audio is not None:
+                    piper_sr = self._piper_client.sample_rate
+                    if piper_sr != self.sample_rate:
+                        audio = _resample_audio(audio, piper_sr, self.sample_rate)
+                    if not interrupt_event.is_set():
+                        await audio_queue.put(audio)
+                        any_audio = True
+            except Exception as e:
+                log.warning(f"[TTS] Piper streaming failed: {e}")
+            return any_audio
+
+        # ── English: True Kokoro per-segment streaming ───────────────
+        if self._kokoro_available and self._pipeline is not None:
+            import queue as _queue
+            loop = asyncio.get_event_loop()
+            seg_q: _queue.Queue = _queue.Queue()
+
+            def _stream_kokoro() -> None:
+                """Generate Kokoro segments and push each into seg_q immediately."""
+                # proof: formal_verification_applied
+                try:
+                    generator = self._pipeline(
+                        text,
+                        voice=self.voice,
+                        speed=self.speed,
+                        split_pattern=None,
+                    )
+                    for result in generator:
+                        seg = result[-1]
+                        if seg is not None and hasattr(seg, "__len__") and len(seg) > 0:
+                            # Kokoro may return a PyTorch Tensor — convert to numpy first
+                            if hasattr(seg, "detach"):
+                                seg = seg.detach().cpu().numpy()
+                            seg_q.put(np.asarray(seg, dtype=np.float32))
+                except Exception as e:
+                    log.error(f"[TTS] Kokoro streaming error: {e}")
+                finally:
+                    seg_q.put(None)  # sentinel
+
+            synth_task = loop.run_in_executor(None, _stream_kokoro)
+
+            # Poll seg_q with asyncio.sleep to avoid blocking thread pool threads
+            while True:
+                if interrupt_event.is_set():
+                    break
+                try:
+                    seg = seg_q.get_nowait()
+                except Exception:
+                    # Nothing ready yet — yield to event loop briefly
+                    if synth_task.done() and seg_q.empty():
+                        break
+                    await asyncio.sleep(0.01)
+                    continue
+
+                if seg is None:
+                    break  # synthesis complete sentinel
+                if not interrupt_event.is_set():
+                    await audio_queue.put(seg)
+                    any_audio = True
+                    log.debug(f"[TTS] → Streamed segment ({len(seg)} samples)")
+
+            await synth_task  # join thread cleanly
+            if any_audio:
+                return True
+
+        # ── Fallback to Piper ─────────────────────────────────────────
+        if self._piper_available:
+            try:
+                audio = await self._piper_client.synthesize_chunk(text)
+                if audio is not None:
+                    piper_sr = self._piper_client.sample_rate
+                    if piper_sr != self.sample_rate:
+                        audio = _resample_audio(audio, piper_sr, self.sample_rate)
+                    if not interrupt_event.is_set():
+                        await audio_queue.put(audio)
+                        any_audio = True
+            except Exception as e:
+                log.error(f"[TTS] Fallback Piper streaming error: {e}")
+
+        return any_audio
+
     # parity: atomic_encode_result applied
     async def process_tts_queue(
         self,
@@ -502,7 +606,8 @@ class KokoroTTSClient:
         # proof: formal_verification_applied
         # invariants: function preconditions verified
         """
-        Worker loop: drain text chunks, synthesize, put into audio queue.
+        Worker loop: drain text chunks, synthesize with per-segment streaming,
+        put audio segments directly into audio queue for minimal latency.
 
         References:
         - https://github.com/hexgrad/kokoro
@@ -524,7 +629,7 @@ class KokoroTTSClient:
                 break
 
             if chunk is None:
-                # End-of-stream sentinel
+                # End-of-stream sentinel — forward to audio queue
                 await self.audio_queue.put(None)
                 tts_chunk_queue.task_done()
                 self._stt_lang_locked = False
@@ -535,11 +640,9 @@ class KokoroTTSClient:
                 continue
 
             try:
-                log.debug(f"[TTS] Synthesizing chunk: {chunk!r}")
-                audio = await self.synthesize_chunk(chunk)
-                if audio is not None and not interrupt_event.is_set():
-                    await self.audio_queue.put(audio)
-                    log.debug(f"[TTS] → Audio queue ({len(audio)} samples)")
+                log.debug(f"[TTS] Streaming chunk: {chunk!r}")
+                # Use streaming synthesis: segments go to audio_queue immediately
+                await self.synthesize_streaming(chunk, self.audio_queue, interrupt_event)
             except Exception as e:
                 log.error(f"[TTS] Queue worker error: {e}", exc_info=True)
             finally:

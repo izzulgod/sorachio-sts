@@ -130,8 +130,10 @@ def _patch_espeak_data_path() -> None:
                 ["sudo", "ln", "-s", str(data_path), str(hardcoded)],
                 capture_output=True, timeout=10,
             )
+    except (ImportError, ModuleNotFoundError):
+        pass
     except Exception as e:
-        logging.warning("Suppressed error in espeak data path symlink creation: %s", e)
+        logging.debug("Suppressed error in espeak data path symlink creation: %s", e)
 
 _patch_espeak_data_path()
 

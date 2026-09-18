@@ -172,11 +172,11 @@ class PersonalityCore:
                 except asyncio.TimeoutError:
                     log.warning("[Personality] TTS queue full — dropping chunk")
 
-            # Send end-of-stream sentinel to TTS queue
-            try:
-                await asyncio.wait_for(self.tts_queue.put(None), timeout=2.0)
-            except Exception as e:
-                log.debug(f"[Personality] Could not send end sentinel to TTS queue: {e}")
+            # NOTE: End-of-stream sentinel (None) is sent by the pipeline's
+            # _cognitive_worker after dispatch() returns, NOT here.
+            # Sending it here too would cause a double-sentinel race: TTS worker
+            # terminates early → mic unmutes before response finishes → next
+            # user utterance collides with ongoing generation.
 
             log.info(
                 f"[Personality] Complete: {len(self._full_response)} chars, "

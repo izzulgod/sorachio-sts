@@ -79,6 +79,21 @@ class WakeWordDetector:
                 self.model = Model(wakeword_model_paths=model_paths)
             else:
                 self.model = Model()
+
+            # Cache pristine silence feature buffers created during initialization.
+            # Crucial: openwakeword initializes feature_buffer with speech_embeddings of silence.
+            # Setting it to np.zeros_like creates an artificial step-function artifact that
+            # causes alexa_v0.1 to falsely trigger at 0.63+ score on subsequent ambient noise.
+            self._blank_feature_buffer = None
+            self._blank_melspec_buffer = None
+            if hasattr(self.model, "preprocessor"):
+                pr = self.model.preprocessor
+                if hasattr(pr, "feature_buffer") and hasattr(pr.feature_buffer, "copy"):
+                    self._blank_feature_buffer = pr.feature_buffer.copy()
+                if hasattr(pr, "melspectrogram_buffer") and hasattr(pr.melspectrogram_buffer, "copy"):
+                    self._blank_melspec_buffer = pr.melspectrogram_buffer.copy()
+
+            self._pcm_buffer = bytearray()
             log.info(f"WakeWordDetector loaded models: {list(self.model.models.keys())}")
         except Exception as e:
             log.error(f"Failed to initialize OpenWakeWord model: {e}")
@@ -87,6 +102,8 @@ class WakeWordDetector:
     def process_pcm(self, pcm_data: bytes | np.ndarray) -> tuple[bool, str, float]:
         """
         Process a chunk of 16kHz 16-bit Mono PCM audio.
+        Buffers audio until at least 1280 samples (80ms = 2560 bytes) are available,
+        matching OpenWakeWord's native feature extraction window.
 
         Args:
             pcm_data: Raw PCM audio bytes or numpy int16 array.
@@ -94,13 +111,28 @@ class WakeWordDetector:
         Returns:
             Tuple of (detected: bool, word_name: str, score: float)
         """
-        if isinstance(pcm_data, bytes):
-            audio_array = np.frombuffer(pcm_data, dtype=np.int16)
+        if isinstance(pcm_data, np.ndarray):
+            raw_bytes = pcm_data.tobytes()
+        elif isinstance(pcm_data, bytes):
+            raw_bytes = pcm_data
         else:
-            audio_array = pcm_data
-
-        if len(audio_array) == 0:
             return False, "", 0.0
+
+        if not raw_bytes:
+            return False, "", 0.0
+
+        self._pcm_buffer.extend(raw_bytes)
+
+        # OpenWakeWord expects multiples of 80ms (1280 samples = 2560 bytes for int16)
+        MIN_BYTES = 1280 * 2
+        if len(self._pcm_buffer) < MIN_BYTES:
+            return False, "", 0.0
+
+        # Extract 1280-sample frame
+        frame_bytes = bytes(self._pcm_buffer[:MIN_BYTES])
+        del self._pcm_buffer[:MIN_BYTES]
+
+        audio_array = np.frombuffer(frame_bytes, dtype=np.int16)
 
         # Predict confidence scores using openwakeword
         prediction = self.model.predict(audio_array)
@@ -114,15 +146,29 @@ class WakeWordDetector:
                 # Check if word matches target list (or trigger on any pretrained word if target list is empty)
                 is_target = not self.target_words or any(tw in word_lower for tw in self.target_words)
 
-                if is_target and score_val >= self.threshold:
-                    log.info(f"Wake word detected! Model='{word}', Score={score_val:.3f}")
+                # OpenWakeWord models vary significantly in sensitivity:
+                # - alexa_v0.1 is overly eager/sensitive, needs >= 0.60 to avoid false positives
+                # - hey_jarvis_v0.1 & hey_mycroft_v0.1 are more conservative, best at ~0.40
+                target_thresh = self.threshold
+                if "alexa" in word_lower:
+                    target_thresh = max(self.threshold, 0.60)
+                elif "jarvis" in word_lower or "mycroft" in word_lower:
+                    target_thresh = min(self.threshold, 0.40)
+
+                if is_target and score_val >= target_thresh:
+                    log.info(
+                        f"Wake word detected! Model='{word}', Score={score_val:.3f} "
+                        f"(threshold={target_thresh:.2f})"
+                    )
                     self.reset()
                     return True, word, score_val
 
         return False, "", 0.0
 
     def reset(self) -> None:
-        """Reset internal state buffer and preprocessor feature buffers of openwakeword model."""
+        """Reset internal state buffer and restore pristine silence embeddings to prevent ghost triggers."""
+        self._pcm_buffer = bytearray()
+
         if not hasattr(self, "model") or self.model is None:
             return
 
@@ -132,12 +178,15 @@ class WakeWordDetector:
         if hasattr(self.model, "prediction_buffer"):
             self.model.prediction_buffer.clear()
 
-        # Deep reset openwakeword preprocessor feature buffers to prevent ghost triggers
+        # Restore pristine silence embeddings instead of setting to all zeros
+        # (zeros create a sharp boundary artifact that causes false alexa triggers)
         if hasattr(self.model, "preprocessor"):
             pr = self.model.preprocessor
             if hasattr(pr, "raw_data_buffer"):
                 pr.raw_data_buffer.clear()
-            if hasattr(pr, "feature_buffer") and hasattr(pr.feature_buffer, "shape"):
-                pr.feature_buffer = np.zeros_like(pr.feature_buffer)
-            if hasattr(pr, "melspectrogram_buffer") and hasattr(pr.melspectrogram_buffer, "shape"):
-                pr.melspectrogram_buffer = np.zeros_like(pr.melspectrogram_buffer)
+            if self._blank_feature_buffer is not None:
+                pr.feature_buffer = self._blank_feature_buffer.copy()
+            if self._blank_melspec_buffer is not None:
+                pr.melspectrogram_buffer = self._blank_melspec_buffer.copy()
+            if hasattr(pr, "accumulated_samples"):
+                pr.accumulated_samples = 0

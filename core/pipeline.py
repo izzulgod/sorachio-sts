@@ -560,6 +560,8 @@ class SorachioPipeline:
 
         async def _on_wake_word_detected(event):
             log.info("[Pipeline] ⚡ Wake word detected! Triggering instant quick response.")
+            if self._capture:
+                self._capture.touch_active_time()
             if self.settings.wakeword.confirmation_sound and self._tts and getattr(self._tts, "_available", True):
                 import random
                 quick_phrases = ["Hey there!", "I'm listening!", "Yes?", "Hello!"]
@@ -812,13 +814,14 @@ class SorachioPipeline:
             # Vision integration: capture snapshot if requested with explicit visual intent
             image_b64 = None
             is_visual_topic = decision.get("topic") == "visual_analysis"
+            is_visual_action = decision.get("action") == "look"
             visual_triggers = (
                 "look", "see", "watch", "camera", "picture", "photo",
                 "show", "view", "lihat", "kamera", "foto", "gambar",
             )
             has_visual_intent = any(w in transcript.lower() for w in visual_triggers)
 
-            if is_visual_topic and has_visual_intent and self.settings.vision.enabled:
+            if (is_visual_topic or is_visual_action) and (has_visual_intent or is_visual_action) and self.settings.vision.enabled:
                 from vision.capture import capture_frame_base64
                 log.info("[Vision] Capturing snapshot from webcam...")
                 image_b64 = capture_frame_base64(
@@ -855,21 +858,32 @@ class SorachioPipeline:
                     except Exception as e:
                         log.warning(f"[Pipeline] CLI callback failed: {e}")
 
-                # End-of-stream sentinel for TTS
+                # Store interaction in memory or inject fallback if empty
+                if not response:
+                    # Empty response — inject a fallback so the pipeline doesn't silently hang
+                    action = decision.get("action", "")
+                    is_visual = action == "look" or decision.get("topic") == "visual_analysis"
+                    if is_visual:
+                        response = "Let me take a look... I'm having trouble processing the image right now."
+                    else:
+                        response = "I'm sorry, I couldn't process that. Could you say it again?"
+                    log.warning(f"[Cognitive] Empty response — injecting fallback: {response!r}")
+                    await self._tts_chunk_queue.put(response)
+                    await self.bus.emit(EventType.RESPONSE_TOKEN, data=response, source="cognitive")
+
+                # End-of-stream sentinel for TTS (must come AFTER all chunks/fallback are queued)
                 await self._tts_chunk_queue.put(None)
 
-                # Store interaction in memory
-                if response:
-                    await self._context.store_interaction(
-                        user_input=transcript,
-                        assistant_response=response,
-                        cognitive_decision=decision,
-                        llm_client=self._llm_gateway,
-                    )
+                await self._context.store_interaction(
+                    user_input=transcript,
+                    assistant_response=response,
+                    cognitive_decision=decision,
+                    llm_client=self._llm_gateway,
+                )
             finally:
-                # Unmute mic so user can speak next turn & refresh active timer
+                # Refresh active mode timer now that a turn is complete.
+                # Normal unmute path: _on_playback_finished fires after audio plays.
                 if self._capture:
-                    self._capture.unmute()
                     self._capture.touch_active_time()
 
     async def _tts_worker(self) -> None:
@@ -954,6 +968,8 @@ class SorachioPipeline:
     async def _on_playback_finished(self, event) -> None:
         """
         Called when TTS playback reaches the end-of-stream sentinel.
+        This is the correct place to unmute the mic — audio has actually
+        finished playing, so there is no risk of capturing TTS bleed.
 
         References:
         - https://docs.python.org/3/library/asyncio.html
@@ -963,6 +979,7 @@ class SorachioPipeline:
         log.debug("[Pipeline] PLAYBACK_FINISHED → unmuting mic")
         if self._capture:
             self._capture.unmute()
+            self._capture.touch_active_time()
 
     async def shutdown(self) -> None:
         # test: test_shutdown

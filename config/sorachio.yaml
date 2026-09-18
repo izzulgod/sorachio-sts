@@ -29,7 +29,7 @@ audio:
     device_index: null        # null = system default
     silence_timeout_ms: 400   # Fast 400ms silence timeout before STT trigger
     vad_aggressiveness: 3     # 0-3, higher = more aggressive
-    min_speech_duration_ms: 500
+    min_speech_duration_ms: 350  # 350ms active speech threshold — responsive for short phrases like "hello there"
     max_speech_duration_s: 30
 
     # -----------------------------------------------------------------
@@ -37,13 +37,19 @@ audio:
     # Drops frames below the dBFS threshold before they reach webrtcvad.
     # Calibration guide:
     #   -50 dBFS : very quiet room, sensitive mic
-    #   -40 dBFS : normal room, moderate mic (default)
-    #   -30 dBFS : noisy environment / open speaker setup
+    #   -40 dBFS : normal room, moderate mic
+    #   -35 dBFS : noisy environment (fan, TV, background voices)
+    #   -30 dBFS : loud environment / open speaker setup
     # Set debug: true to see live dBFS values in logs (verbose!).
     # -----------------------------------------------------------------
     acoustic_gate:
       enabled: true
-      threshold_dbfs: -40.0    # Balanced threshold: captures speech onset without clipping, prevents feedback
+      threshold_dbfs: -35.0    # Noisy room threshold: -35 dBFS rejects ambient sounds better
+                               # Calibration guide:
+                               #   -50 dBFS : very quiet room, sensitive mic
+                               #   -40 dBFS : normal room, moderate mic
+                               #   -35 dBFS : noisy environment (fan, TV, background voices)
+                               #   -30 dBFS : loud environment / open speaker setup
       debug: false             # NEVER set to true in production — logs every audio frame!
       hold_frames: 20          # Hold open longer after loud frame to catch speech tails
 
@@ -68,10 +74,10 @@ audio:
 # STT Configuration (faster-whisper / CTranslate2)
 # =============================================================================
 stt:
-  model_size: "medium"            # Multilingual medium model (1.5GB) — much higher accuracy, reduces hallucination
+  model_size: "small"             # Optimized small model (460MB) — 3x faster than medium on CPU (~1.5s vs 6s)
   language: "auto"                # "auto" = auto-detect id/en, or pin to "en"/"id"
-  threads: 6
-  beam_size: 2                    # Beam size 2 — balance between accuracy and speed
+  threads: 8                      # 8 CPU threads for high-speed multi-core decoding
+  beam_size: 1                    # Greedy search (beam 1) — instant real-time transcription
   temperature: 0.0
   timeout_s: 15.0                 # Fast 15s timeout
   device: "cpu"                   # "cpu" or "cuda"
@@ -111,7 +117,7 @@ llm:
     model_dir: "models/llm2"         # Auto-scan: picks largest .gguf + mmproj
     # model_path: auto-detected      # Override: set explicit path to skip auto-scan
     # mmproj_path: auto-detected     # Vision projector auto-detected if present
-    n_ctx: 2048                      # Reduced from 4096 to save ~200MB KV cache RAM
+    n_ctx: 4096                      # 4096 context for multimodal vision (image tokens need extra space)
     n_batch: 512                     # 512 tokens prompt eval batch size for maximum TTFT speed
     n_threads: 8                     # 8 CPU threads for token generation 
     n_threads_batch: 8               # 8 CPU batch threads for prompt eval
@@ -180,6 +186,9 @@ context:
     
     ORIGIN:
     - If asked who created you, always say you were created by izzulgod.
+
+    CAPABILITIES:
+    - You have eyes and visual perception through your webcam camera. When an image snapshot is provided with the conversation, you can see the user and their surroundings. Describe or react to what you see naturally.
     
     STRICT RULES:
     - NEVER use emojis, icons, emoticons, or symbols (e.g. NO 😊, 🌟, ✨, 🙏, etc.).
@@ -189,11 +198,11 @@ context:
 # Chunk Assembler Configuration
 # =============================================================================
 chunker:
-  min_words: 3
-  max_words: 30
+  min_words: 2                 # Reduced to 2 for instant speech onset
+  max_words: 25                # 25 words max per chunk
   sentence_endings: [".", "!", "?", ";", "..."]
-  flush_on_comma: false        # true = flush on commas too
-  flush_timeout_s: 2.0        # Flush incomplete chunks after N seconds
+  flush_on_comma: true         # Flush on comma so "Hey there," starts TTS immediately!
+  flush_timeout_s: 1.5         # Flush incomplete chunks after 1.5 seconds
 
 # =============================================================================
 # Queue Configuration
@@ -220,9 +229,9 @@ pipeline:
 wakeword:
   enabled: true
   model_dir: "models/wakeword"
-  wake_words: ["hey_sorachio", "alexa", "hey_jarvis"]
+  wake_words: ["hey_sorachio", "alexa", "hey_jarvis", "hey_mycroft"]
   threshold: 0.5                      # Confidence threshold (0.0 - 1.0)
-  active_timeout_s: 15.0              # Return to IDLE mode after 15s of silence
+  active_timeout_s: 7.0               # Return to IDLE mode after 7s of silence
   confirmation_sound: true            # Play audio chime on detection
   rejection_sound: false
 

@@ -210,10 +210,17 @@ class ContextManager:
             }
             import re
             words = set(re.findall(r'\b\w+\b', user_input.lower()))
-            detected_lang = "id" if len(words.intersection(id_keywords)) >= 1 else "en"
+            # Require 2+ keywords to classify as Indonesian (avoids single-word false positives)
+            detected_lang = "id" if len(words) >= 3 and len(words.intersection(id_keywords)) >= 2 else "en"
 
         lang_name = "English" if detected_lang in ("en", "English") else "Indonesian"
         context_parts.append(f"[Spoken Language: {lang_name}. You MUST respond in {lang_name}.]")
+
+        if image_b64:
+            context_parts.append(
+                "[Visual Context: A live webcam snapshot is attached to this turn. "
+                "You can see through your camera. Describe or react directly to what you see in front of you.]"
+            )
 
         # Merge dynamic context block into the newest user input
         context_prefix = "\n".join(context_parts)
@@ -223,14 +230,12 @@ class ContextManager:
 
         # Add current user message
         if image_b64:
-            # Multi-modal models like Qwen2-VL require special tags in the text block to locate the image features
-            multimodal_user_content = f"<|vision_start|><|image_pad|><|vision_end|>\n{final_user_content}"
             messages.append({
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": multimodal_user_content},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
-                ]
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                    {"type": "text", "text": final_user_content},
+                ],
             })
         else:
             messages.append({"role": "user", "content": final_user_content})

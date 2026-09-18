@@ -689,14 +689,10 @@ class WhisperClient:
             probs = dict(all_probs)
 
             id_prob = probs.get("id", 0.0)
-            ms_prob = probs.get("ms", 0.0)
-            jw_prob = probs.get("jw", 0.0)
-            su_prob = probs.get("su", 0.0)
             en_prob = probs.get("en", 0.0)
 
-            total_id_prob = id_prob + ms_prob + jw_prob + su_prob
-
-            if total_id_prob > en_prob and total_id_prob > 0.15:
+            # Route to Indonesian only if id probability is clearly higher than English
+            if id_prob > en_prob and id_prob > 0.35:
                 return "id"
             return "en"
 
@@ -711,14 +707,11 @@ class WhisperClient:
         We MUST consume ALL segments into a list immediately — otherwise
         the generator is never evaluated and the call appears to hang.
 
-        Language routing (auto mode):
-            We run detect_language() first (extremely fast, ~0.02s) to get
-            probabilities. We sum Indonesian and regional candidates (ms, jw, su)
-            and compare against English (en) with a bias correction factor.
-            The Whisper base model has a massive English prior (~43% on silence),
-            so Indonesian probabilities are multiplied by a correction factor
-            to compensate. We then force Whisper to transcribe using either
-            'id' or 'en' to prevent random language misdetection.
+        Language handling:
+            In auto mode (self.language is None), we pass language=None to transcribe().
+            Whisper's decoder natively identifies the spoken language during evaluation.
+            Forcing a target language like 'id' onto English audio causes Whisper to
+            translate rather than transcribe, which is avoided by passing language=None.
 
         References:
         - https://github.com/SYSTRAN/faster-whisper
@@ -737,41 +730,8 @@ class WhisperClient:
                 f"{audio_duration_s:.1f}s"
             )
 
-            # In auto mode: run fast language candidate check first
-            if self.language is None:
-                try:
-                    _, _, all_probs = self._model.detect_language(audio)
-                    probs = dict(all_probs)
-
-                    id_prob = probs.get("id", 0.0)
-                    ms_prob = probs.get("ms", 0.0)   # Malay
-                    jw_prob = probs.get("jw", 0.0)   # Javanese
-                    su_prob = probs.get("su", 0.0)   # Sundanese
-                    en_prob = probs.get("en", 0.0)
-
-                    total_id_prob = id_prob + ms_prob + jw_prob + su_prob
-
-                    # Log language detection probabilities
-                    log.debug(
-                        f"[STT] Candidate probabilities — id/ms/jw/su: {total_id_prob:.3f}, en: {en_prob:.3f}"
-                    )
-
-                    # Require a confident threshold (0.15) to route to Indonesian;
-                    # otherwise default to English. This prevents static or short English
-                    # words from being misrouted and translated to Indonesian.
-                    if total_id_prob > en_prob and total_id_prob > 0.15:
-                        target_lang = "id"
-                    else:
-                        target_lang = "en"
-
-                    log.info(f"[STT] Language route → {target_lang}")
-                except Exception as detect_err:
-                    log.warning(f"[STT] Language detection failed: {detect_err}")
-                    target_lang = "en"
-            else:
-                target_lang = self.language
-
-            self._last_detected_language = target_lang
+            # In auto mode, pass None so Whisper decodes natively in the spoken language
+            target_lang = self.language
 
             # Audio is pre-filtered by capture.py VAD; disabling secondary VAD
             # speeds up transcription by ~1s
@@ -802,9 +762,20 @@ class WhisperClient:
             # Not calling list() here causes the pipeline to silently stall.
             segments = list(segments_gen)
 
+            detected_lang = info.language if (info and info.language) else "en"
+            if detected_lang in ("id", "ms", "jw", "su"):
+                resolved_lang = "id"
+            elif detected_lang == "en":
+                resolved_lang = "en"
+            else:
+                resolved_lang = "en"
+
+            self._last_detected_language = resolved_lang
+
             log.info(
-                f"[STT] Transcribed | lang={target_lang} | "
-                f"whisper_detected={info.language} (prob={info.language_probability:.2f}) | "
+                f"[STT] Transcribed | lang={resolved_lang} | "
+                f"whisper_detected={info.language if info else 'unknown'} "
+                f"(prob={info.language_probability if info else 0.0:.2f}) | "
                 f"segments={len(segments)}"
             )
 
@@ -854,12 +825,19 @@ class WhisperClient:
         }
         import re
         words = set(re.findall(r'\b\w+\b', text.lower()))
-        if len(words.intersection(id_keywords)) >= 1:
+        # Require at least 2 ID keywords — prevents single-word false positives
+        if len(words.intersection(id_keywords)) >= 2:
             return "id"
+
+        # Skip langdetect for very short texts (< 5 words) — unreliable on short phrases
+        if len(words) < 5:
+            return initial_lang
 
         try:
             from langdetect import detect
             text_lang = detect(text)
+            if text_lang in ("id", "ms", "jw", "su"):
+                return "id"
             if text_lang == "en":
                 return "en"
         except Exception as e:
