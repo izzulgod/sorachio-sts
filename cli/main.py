@@ -888,6 +888,9 @@ class VoiceCLI:
         if not transcript or not transcript.strip():
             return
         if self.mode == "run":
+            if getattr(self, "_is_responding", False):
+                console.print()
+                self._is_responding = False
             # Stop spinner → clean print → restart spinner for thinking
             self._spin_stop()
             console.print(f"\n[bold cyan]You:[/bold cyan] {transcript}")

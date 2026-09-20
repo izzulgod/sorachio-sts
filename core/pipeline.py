@@ -692,6 +692,12 @@ class SorachioPipeline:
 
             self._stt_queue.task_done()
 
+            # Hallucination guard (e.g. "Terima kasih.", "Thank you.", silence noise)
+            from stt.whisper_client import _is_hallucination
+            if transcript and _is_hallucination(transcript):
+                log.info(f"[Pipeline] Filtered Whisper hallucination: {transcript!r}")
+                transcript = None
+
             if transcript:
                 await self.bus.emit(
                     EventType.STT_RESULT, data=transcript, source="stt"

@@ -29,9 +29,9 @@ audio:
     channels: 1               # Mono
     chunk_duration_ms: 30     # VAD frame size
     device_index: null        # null = system default
-    silence_timeout_ms: 400   # Fast 400ms silence timeout before STT trigger
+    silence_timeout_ms: 700   # 700ms silence timeout — allows natural conversational pauses without chopping speech
     vad_aggressiveness: 3     # 0-3, higher = more aggressive
-    min_speech_duration_ms: 350  # 350ms active speech threshold — responsive for short phrases like "hello there"
+    min_speech_duration_ms: 450  # 450ms active speech threshold — rejects background noises/clicks
     max_speech_duration_s: 30
 
     # -----------------------------------------------------------------
@@ -219,7 +219,7 @@ queues:
 # Pipeline Configuration
 # =============================================================================
 pipeline:
-  enable_interruption: true            # Barge-in: stop TTS when user speaks
+  enable_interruption: false           # Disabled for open-speaker setups without AEC to prevent self-interruption loops
   interruption_vad_aggressiveness: 3   # More aggressive VAD during playback
   interruption_debounce_frames: 8      # Debounced barge-in: 8 frames * 30ms = 240ms response window
   startup_greeting: true

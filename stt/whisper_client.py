@@ -199,8 +199,27 @@ def _is_hallucination(text: str) -> bool:
     # invariants: function preconditions verified
     import re
 
+    if not text:
+        return True
+
     normalised = text.strip().lower()
     if normalised in _HALLUCINATION_PHRASES:
+        return True
+
+    # Punctuation-stripped check
+    cleaned = re.sub(r"[^\w\s]", "", normalised).strip()
+    cleaned = " ".join(cleaned.split())
+    if cleaned in _HALLUCINATION_PHRASES:
+        return True
+
+    # Common variations of thank you / terima kasih / credits
+    if cleaned in (
+        "terima kasih", "terimakasih", "terima kasih banyak", "terimakasih banyak",
+        "makasih", "makasih banyak", "sama sama", "samasama",
+        "thank you", "thanks", "thank you very much", "thanks a lot",
+        "sampai jumpa", "sampai jumpa lagi", "selamat tinggal",
+        "jangan lupa subscribe", "selamat menonton",
+    ):
         return True
 
     # Bracketed audio/annotation tags e.g. [music], (applause), [coughing]
@@ -218,6 +237,8 @@ def _is_hallucination(text: str) -> bool:
     )
     if any(m in normalised for m in subtitle_markers):
         return True
+
+    return False
 
     # Repeated character loops e.g. "aaaaaa", "??????"
     if re.search(r"(.)\1{5,}", normalised):
@@ -627,7 +648,7 @@ class WhisperClient:
                 # Yield segments as they complete
                 for segment in segments_gen:
                     text = _clean_transcript(segment.text)
-                    if text:
+                    if text and not _is_hallucination(text):
                         yield text
 
             except Exception as e:
