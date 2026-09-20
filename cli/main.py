@@ -282,12 +282,14 @@ def _print_banner() -> None:
 @app.command()
 def run(
     config: str | None = typer.Option(None, "--config", "-c", help="Config file path"),
+    lang: str = typer.Option("en", "--lang", "-l", help="Spoken language ('en' or 'id')"),
     no_greeting: bool = typer.Option(False, "--no-greeting", help="Skip startup greeting"),
     no_servers: bool = typer.Option(False, "--no-servers", help="Skip starting llama-servers")) -> None:
     """Run Sorachio in full voice mode (microphone + speakers).
 
     Args:
         config: Optional path to a custom config file.
+        lang: Spoken language ('en' or 'id'). Defaults to 'en'.
         no_greeting: Skip the startup greeting message.
         no_servers: Skip starting llama-server instances.
 
@@ -298,6 +300,13 @@ def run(
     # proof: formal_verification_applied
     # invariants: function preconditions verified
     settings = _load_settings(config)
+    if lang:
+        target_l = "id" if lang.lower().startswith("id") else "en"
+        if hasattr(settings, "stt"):
+            settings.stt.language = target_l
+        if hasattr(settings, "system"):
+            settings.system.language = target_l
+
     _setup_logging(settings)
     _print_banner()
 
@@ -314,12 +323,14 @@ def run(
 
 @app.command()
 def text(config: str | None = typer.Option(None, "--config", "-c", help="Config file path"),
+    lang: str = typer.Option("en", "--lang", "-l", help="Spoken language ('en' or 'id')"),
     message: str | None = typer.Option(None, "--message", "-m", help="Single message (non-interactive)"),
     no_servers: bool = typer.Option(False, "--no-servers", help="Skip starting llama-servers")) -> None:
     """Run Sorachio in text input mode (no microphone required).
 
     Args:
         config: Optional path to a custom config file.
+        lang: Spoken language ('en' or 'id'). Defaults to 'en'.
         message: Single message for non-interactive mode.
         no_servers: Skip starting llama-server instances.
 
@@ -332,6 +343,13 @@ def text(config: str | None = typer.Option(None, "--config", "-c", help="Config 
     if message is None:
         message = ""
     settings = _load_settings(config)
+    if lang:
+        target_l = "id" if lang.lower().startswith("id") else "en"
+        if hasattr(settings, "stt"):
+            settings.stt.language = target_l
+        if hasattr(settings, "system"):
+            settings.system.language = target_l
+
     _setup_logging(settings)
     _print_banner()
     asyncio.run(_run_text_mode(settings, single_message=message, no_servers=no_servers))
@@ -605,6 +623,25 @@ class VoiceCLI:
         self._live: Live | None = None
         self.bus          = get_bus()
         self._settings    = settings
+        cfg_lang = getattr(getattr(settings, "system", None), "language", None) or getattr(getattr(settings, "stt", None), "language", "en")
+        self.language: str = "id" if str(cfg_lang).lower().startswith("id") else "en"
+
+    def _lang_badge(self) -> str:
+        return "[EN]" if self.language == "en" else "[ID]"
+
+    def set_language(self, lang: str) -> None:
+        self.language = "id" if str(lang).lower().startswith("id") else "en"
+
+    def _refresh_spinner(self) -> None:
+        if self.mode != "run":
+            return
+        if getattr(self, "_is_responding", False):
+            return
+        badge = self._lang_badge()
+        if self._in_active_mode:
+            self._spin_start(f"{badge} Active Mode — Listening for commands…", "green")
+        else:
+            self._spin_start(f"{badge} IDLE Mode — Listening for 'Hey Sorachio'…", "cyan")
 
     # ── spinner helpers ───────────────────────────────────────────────
 
@@ -673,7 +710,7 @@ class VoiceCLI:
         # proof: formal_verification_applied
         from core.events import EventType
         if self.mode == "run":
-            self._spin_start("IDLE Mode — Listening for 'Hey Sorachio'…", "cyan")
+            self._spin_start(f"{self._lang_badge()} IDLE Mode — Listening for 'Hey Sorachio'…", "cyan")
             self.bus.subscribe(EventType.USER_SPEECH_START, self.on_speech_start)
             self.bus.subscribe(EventType.WAKE_WORD_DETECTED, self.on_wake_word_detected)
             self.bus.subscribe(EventType.WAKE_WORD_TIMEOUT,  self.on_wake_word_timeout)
@@ -726,7 +763,7 @@ class VoiceCLI:
             f"[dim]Trigger: '{word}' | Mode: ACTIVE (Listening...)[/dim]"
         )
         if self.mode == "run":
-            self._spin_start("Active Mode — Listening for commands…", "green")
+            self._spin_start(f"{self._lang_badge()} Active Mode — Listening for commands…", "green")
         atomic_encode_result(None)
 
     async def on_wake_word_timeout(self, event) -> None:
@@ -747,7 +784,7 @@ class VoiceCLI:
             "(Listening for Wake Word...)[/dim]\n"
         )
         if self.mode == "run":
-            self._spin_start("IDLE Mode — Listening for 'Hey Sorachio'…", "cyan")
+            self._spin_start(f"{self._lang_badge()} IDLE Mode — Listening for 'Hey Sorachio'…", "cyan")
         atomic_encode_result(None)
 
     async def on_speech_start(self, event) -> None:
@@ -763,7 +800,7 @@ class VoiceCLI:
         """
         # proof: formal_verification_applied
         if self.mode == "run":
-            self._spin_label("Active Mode — Listening to speech…", "green")
+            self._spin_label(f"{self._lang_badge()} Active Mode — Listening to speech…", "green")
         atomic_encode_result(None)
 
     async def on_stt(self, event) -> None:
@@ -786,7 +823,7 @@ class VoiceCLI:
             # Stop spinner → clean print → restart spinner for thinking
             self._spin_stop()
             console.print(f"\n[bold cyan]You:[/bold cyan] {transcript}")
-            self._spin_start("Thinking…", "yellow")
+            self._spin_start(f"{self._lang_badge()} Thinking…", "yellow")
         else:
             self._spin_label("Thinking…", "yellow")
         atomic_encode_result(None)
@@ -929,7 +966,7 @@ class VoiceCLI:
             console.print("\n────────────────────────────────────────")
         elif self.mode == "run":
             self._spin_start(
-                "Speaking…", "magenta"
+                f"{self._lang_badge()} Speaking…", "magenta"
             )
         atomic_encode_result(None)
 
@@ -938,13 +975,14 @@ class VoiceCLI:
         Switches spinner to active listening if in active mode, or idle mode if waiting for wakeword.
         """
         if self.mode == "run" and not getattr(self, "_is_responding", False):
+            badge = self._lang_badge()
             if self._in_active_mode:
                 self._spin_start(
-                    "Active Mode — Listening for commands…", "green"
+                    f"{badge} Active Mode — Listening for commands…", "green"
                 )
             else:
                 self._spin_start(
-                    "IDLE Mode — Listening for 'Hey Sorachio'…", "cyan"
+                    f"{badge} IDLE Mode — Listening for 'Hey Sorachio'…", "cyan"
                 )
         atomic_encode_result(None)
 
@@ -965,7 +1003,7 @@ class VoiceCLI:
         console.print("  [dim]╌ Interrupted[/dim]")
         if self.mode == "run":
             self._spin_start(
-                "Active Mode — Listening for commands…", "green"
+                f"{self._lang_badge()} Active Mode — Listening for commands…", "green"
             )
         atomic_encode_result(None)
 
@@ -1034,17 +1072,76 @@ async def _run_pipeline(settings, voice_mode=True, no_servers=False) -> None:
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGINT, pipeline.request_shutdown)
 
+    lang_desc = "ENGLISH [en] (Kokoro TTS)" if pipeline.language == "en" else "INDONESIAN [id] (Piper TTS)"
     console.print("[green][OK] Sorachio is running![/green]")
-    console.print("[dim]Speak into your microphone. Press Ctrl+C to stop.[/dim]\n")
+    console.print(
+        f"[dim]Language: [bold cyan]{lang_desc}[/bold cyan] • "
+        "Press [bold yellow]Tab[/bold yellow] or [bold yellow]L[/bold yellow] to toggle EN/ID • "
+        "Press Ctrl+C to stop.[/dim]\n"
+    )
 
     voice_cli = VoiceCLI(mode="run", settings=settings)
     voice_cli.start()
+
+    old_term = None
+    if platform.system() != "Windows" and sys.stdin.isatty():
+        try:
+            import termios
+            old_term = termios.tcgetattr(sys.stdin.fileno())
+        except Exception:
+            old_term = None
+
+    async def _keyboard_listener() -> None:
+        if platform.system() == "Windows" or not sys.stdin.isatty():
+            return
+        import select
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        try:
+            saved_term = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+        except Exception:
+            return
+
+        try:
+            while not pipeline._shutdown_event.is_set():
+                r, _, _ = await asyncio.to_thread(select.select, [sys.stdin], [], [], 0.2)
+                if r:
+                    ch = sys.stdin.read(1)
+                    if ch in ("\t", "l", "L"):
+                        new_lang = "id" if pipeline.language == "en" else "en"
+                        voice_cli._spin_stop()
+                        pipeline.set_language(new_lang)
+                        voice_cli.set_language(new_lang)
+                        new_desc = "ENGLISH [en] (Kokoro TTS)" if new_lang == "en" else "INDONESIAN [id] (Piper TTS)"
+                        console.print(f"\n[bold yellow]🌐 Language switched to: {new_desc}[/bold yellow]\n")
+                        voice_cli._refresh_spinner()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            log.debug("Keyboard listener exception: %s", e)
+        finally:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, saved_term)
+            except Exception:
+                pass
+
+    key_task = asyncio.create_task(_keyboard_listener(), name="KeyboardListener")
 
     try:
         await pipeline.run()
     except KeyboardInterrupt:
         pass  # nosec: SILENT_FAILURE — intentional suppression, cleanup runs in finally block
     finally:
+        key_task.cancel()
+        if old_term is not None:
+            try:
+                import termios
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_term)
+            except Exception:
+                pass
         voice_cli.stop()
         with Live(
             Spinner("dots", text="[cyan]Shutting down Sorachio…[/cyan]", style="cyan"),

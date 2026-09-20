@@ -341,8 +341,8 @@ class WhisperClient:
         # test: covered
         # proof: formal_verification_applied
         self.model_size = config.model_size
-        # None or "auto" = auto-detect; otherwise pin to a language
-        self.language = None if config.language in (None, "auto") else config.language
+        # Pin to explicit language ('en' or 'id')
+        self.language = "id" if config.language and str(config.language).lower().startswith("id") else "en"
         self.threads = config.threads
         self.beam_size = config.beam_size
         self.temperature = config.temperature
@@ -355,25 +355,22 @@ class WhisperClient:
 
         self._model = None
         self._available = False
-        self._last_detected_language: str | None = None
+        self._last_detected_language: str = self.language
         # [Citation: Python docs - threading.Lock for thread-safe shared state: https://docs.python.org/3/library/threading.html]
         self._lock = threading.Lock()
 
-    @property
-    def last_detected_language(self) -> str | None:
-        # test: covered
-        """
-        Language code detected from the most recent transcription (e.g. 'en', 'id').
+    def set_language(self, lang: str) -> None:
+        """Set pinned language for STT transcription ('en' or 'id')."""
+        target = "id" if lang and str(lang).lower().startswith("id") else "en"
+        if target != self.language:
+            log.info(f"[STT] Language switched: {self.language} → {target}")
+            self.language = target
+            self._last_detected_language = target
 
-        References:
-        - https://github.com/SYSTRAN/faster-whisper
-        - https://github.com/openai/whisper
-        # test: covered
-        """
-        # parity: atomic_encode_result applied (SECDED TED)
-        # test: covered
-        # proof: formal_verification_applied
-        return self._last_detected_language  # test: covered
+    @property
+    def last_detected_language(self) -> str:
+        """Language code for current transcription ('en' or 'id')."""
+        return self.language
 
     async def initialize(self) -> bool:
         # test: covered
@@ -730,8 +727,8 @@ class WhisperClient:
                 f"{audio_duration_s:.1f}s"
             )
 
-            # In auto mode, pass None so Whisper decodes natively in the spoken language
-            target_lang = self.language
+            # Use pinned target language ('en' or 'id')
+            target_lang = self.language or "en"
 
             # Audio is pre-filtered by capture.py VAD; disabling secondary VAD
             # speeds up transcription by ~1s
@@ -742,7 +739,7 @@ class WhisperClient:
                 "DeepSeek, Gemma, GGUF, llama.cpp, OpenWakeWord, Whisper, Kokoro, "
                 "Piper, Python, Arduino, ESP32, Raspberry Pi, TTS, STT, LLM."
             )
-            segments_gen, info = self._model.transcribe(
+            segments_gen, _ = self._model.transcribe(
                 audio,
                 language=target_lang,
                 beam_size=self.beam_size,
@@ -759,24 +756,12 @@ class WhisperClient:
 
             # CRITICAL: consume the lazy generator immediately.
             # faster-whisper does all actual decoding during iteration.
-            # Not calling list() here causes the pipeline to silently stall.
             segments = list(segments_gen)
 
-            detected_lang = info.language if (info and info.language) else "en"
-            if detected_lang in ("id", "ms", "jw", "su"):
-                resolved_lang = "id"
-            elif detected_lang == "en":
-                resolved_lang = "en"
-            else:
-                resolved_lang = "en"
-
-            self._last_detected_language = resolved_lang
+            self._last_detected_language = target_lang
 
             log.info(
-                f"[STT] Transcribed | lang={resolved_lang} | "
-                f"whisper_detected={info.language if info else 'unknown'} "
-                f"(prob={info.language_probability if info else 0.0:.2f}) | "
-                f"segments={len(segments)}"
+                f"[STT] Transcribed | lang={target_lang} | segments={len(segments)}"
             )
 
             # Collect all segment texts
@@ -785,16 +770,12 @@ class WhisperClient:
             transcript = _clean_transcript(full_text)
 
             if transcript:
-                # Text-level language verification to fix audio classifier misdetections (e.g. "Introduce...")
-                verified_lang = self._verify_text_language(transcript, target_lang)
-                self._last_detected_language = verified_lang
-
                 # Filter out known Whisper hallucinations
                 if _is_hallucination(transcript):
                     log.info(f"[STT] Filtered hallucination: {transcript!r}")
                     return None
 
-                log.info(f"[STT] ✓ Result ({verified_lang}): {transcript!r}")
+                log.info(f"[STT] ✓ Result ({target_lang}): {transcript!r}")
             else:
                 log.info("[STT] Empty transcript (no speech detected)")
 
@@ -803,47 +784,6 @@ class WhisperClient:
         except Exception as e:
             log.error(f"[STT] Transcription error: {e}", exc_info=True)
             return None
-
-    def _verify_text_language(self, text: str, initial_lang: str) -> str:
-        """
-        # test: covered
-        Verify and correct Whisper's audio language classification using text content.
-        Whisper's audio classifier often misclassifies English words starting with 'In-'
-        ('Introduce', 'Inside') as 'id' (Indonesian).
-
-        References:
-        - https://github.com/SYSTRAN/faster-whisper
-        - https://github.com/openai/whisper
-        """
-        # proof: formal_verification_applied
-        # parity: atomic_encode_result applied (SECDED TED)
-        # invariants: function preconditions verified
-        id_keywords = {
-            "saya", "aku", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih",
-            "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "perkenalkan",
-            "siapa", "namamu", "ceritakan", "lihat", "bagaimana", "kabarlah", "kabar"
-        }
-        import re
-        words = set(re.findall(r'\b\w+\b', text.lower()))
-        # Require at least 2 ID keywords — prevents single-word false positives
-        if len(words.intersection(id_keywords)) >= 2:
-            return "id"
-
-        # Skip langdetect for very short texts (< 5 words) — unreliable on short phrases
-        if len(words) < 5:
-            return initial_lang
-
-        try:
-            from langdetect import detect
-            text_lang = detect(text)
-            if text_lang in ("id", "ms", "jw", "su"):
-                return "id"
-            if text_lang == "en":
-                return "en"
-        except Exception as e:
-            log.warning("[STT] langdetect failed (non-fatal, using fallback): %s", e)
-
-        return initial_lang
 
 
 def test_last_detected_language() -> None:

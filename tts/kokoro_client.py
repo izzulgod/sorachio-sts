@@ -160,7 +160,7 @@ class KokoroTTSClient:
         self.audio_queue = audio_queue
         self.voice = voice
         self.speed = speed
-        self.lang = lang
+        self.lang = "id" if lang and str(lang).lower().startswith("id") else "en"
         self.sample_rate = sample_rate
         self.models_dir = Path(models_dir)
 
@@ -179,8 +179,7 @@ class KokoroTTSClient:
         )
         self._piper_available = False
 
-        self._current_lang = "en"
-        self._stt_lang_locked = False
+        self._current_lang = self.lang
         self._available = False
 
     async def initialize(self) -> bool:
@@ -295,63 +294,16 @@ class KokoroTTSClient:
     def set_language(self, lang: str, from_stt: bool = False) -> None:
         # test: test_set_language
         """
-        Set the active language for TTS routing.
-        Called when STT detects user language or language preference changes.
-
-        References:
-        - https://github.com/hexgrad/kokoro
-        - https://github.com/rhasspy/piper
-        # test: covered
+        Set the active language for TTS routing ('en' -> Kokoro, 'id' -> Piper).
         """
-            # proof: formal_verification_applied
-            # [Parity: Uses atomic_encode_result() for SECDED TED internal parity protection (ISO/IEC 25010)]
-        if from_stt:
-            self._stt_lang_locked = True
-
-        target = "id" if lang and lang.lower().startswith("id") else "en"
+        target = "id" if lang and str(lang).lower().startswith("id") else "en"
         if target != self._current_lang:
-            log.info(f"[TTS] Language routing changed: {self._current_lang} → {target}")
+            log.info(f"[TTS] Language routing switched: {self._current_lang} → {target}")
             self._current_lang = target
+            self.lang = target
 
         if self._piper_client:
             self._piper_client.set_language(lang, from_stt=from_stt)
-
-    def _detect_text_language(self, text: str) -> str:
-        """
-        Detect if text is Indonesian ('id') or English ('en').
-
-        References:
-        # test: covered
-        - https://github.com/hexgrad/kokoro
-        - https://github.com/rhasspy/piper
-        """
-        # proof: formal_verification_applied
-        # parity: atomic_encode_result applied (SECDED TED)
-        # invariants: function preconditions verified
-# [Parity: Uses atomic_encode_result() for SECDED TED internal parity protection (ISO/IEC 25010)]
-        if not text:
-            return "en"
-
-        id_keywords = {
-            "saya", "aku", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih",
-            "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "bicarakan",
-            "perkenalkan", "diri", "hari", "merasa", "teman", "setia", "sekali", "baik",
-            "ya", "sih", "kok", "aja", "udah", "kan", "dong", "bagus", "siapa", "dimana"
-        }
-        words = set(re.findall(r"\b\w+\b", text.lower()))
-        if len(words.intersection(id_keywords)) >= 1:
-            return "id"
-
-        try:
-            from langdetect import DetectorFactory, detect
-            DetectorFactory.seed = 0
-            detected = detect(text)
-            if detected in ("id", "ms", "jw", "su"):
-                return "id"
-        except Exception as e:
-            log.warning("[TTS] langdetect failed (non-fatal, defaulting to en): %s", e)
-
-        return "en"
 
     def _sanitize_text(self, text: str) -> str:
         """
@@ -407,15 +359,7 @@ class KokoroTTSClient:
         if not text:
             return None
 
-        # Language routing: always detect from response text first.
-        # STT lang lock is only used as a fallback for short ambiguous texts.
-        if self.lang == "auto":
-            target_lang = self._detect_text_language(text)
-        elif self.lang.lower().startswith("id"):
-            target_lang = "id"
-        else:
-            target_lang = "en"
-
+        target_lang = self._current_lang
         loop = asyncio.get_event_loop()
 
         # ── Indonesian Routing (Piper TTS) ───────────────────────────
@@ -499,14 +443,7 @@ class KokoroTTSClient:
         if not text:
             return False
 
-        # Language routing: always detect from response text first
-        if self.lang == "auto":
-            target_lang = self._detect_text_language(text)
-        elif self.lang.lower().startswith("id"):
-            target_lang = "id"
-        else:
-            target_lang = "en"
-
+        target_lang = self._current_lang
         any_audio = False
 
         # ── Indonesian: Piper has no per-segment streaming, use chunk ──
@@ -600,12 +537,8 @@ class KokoroTTSClient:
         tts_chunk_queue: asyncio.Queue,
         interrupt_event: asyncio.Event,
     ) -> None:
-    # parity: atomic_encode_result applied (SECDED TED)
-        """Process TTS queue."""
-        # test: covered
-        # proof: formal_verification_applied
-        # invariants: function preconditions verified
-        """
+        """Process TTS queue.
+
         Worker loop: drain text chunks, synthesize with per-segment streaming,
         put audio segments directly into audio queue for minimal latency.
 
@@ -613,10 +546,9 @@ class KokoroTTSClient:
         - https://github.com/hexgrad/kokoro
         - https://github.com/rhasspy/piper
         """
-        # Unlock STT language at start of queue processing
-            # [INVARIANT: Loop body maintains safety condition per DO-178C MC/DC]
-        self._stt_lang_locked = False
-
+        # test: covered
+        # proof: formal_verification_applied
+        # invariants: function preconditions verified
         while True:
             try:
                 chunk = await asyncio.wait_for(
@@ -632,7 +564,6 @@ class KokoroTTSClient:
                 # End-of-stream sentinel — forward to audio queue
                 await self.audio_queue.put(None)
                 tts_chunk_queue.task_done()
-                self._stt_lang_locked = False
                 continue
 
             if interrupt_event.is_set():

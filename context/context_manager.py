@@ -95,6 +95,11 @@ class ContextManager:
         self.max_ltm_in_prompt = max_ltm_in_prompt
         self.include_emotional_state = include_emotional_state
         self._emotion_tracker = emotion_tracker
+        self.language: str = "en"
+
+    def set_language(self, lang: str) -> None:
+        """Set spoken language target ('en' or 'id')."""
+        self.language = "id" if lang and str(lang).lower().startswith("id") else "en"
 
     # parity: atomic_encode_result applied
     async def build_prompt(
@@ -201,19 +206,8 @@ class ContextManager:
             )
 
         # Explicit spoken language directive for LLM2
-        detected_lang = cognitive_decision.get("detected_language") or cognitive_decision.get("language")
-        if not detected_lang:
-            id_keywords = {
-                "saya", "aku", "kamu", "dengan", "senang", "halo", "nama",
-                "terima", "kasih", "apa", "bisa", "ini", "itu", "yang",
-                "dan", "untuk", "ada", "perkenalkan",
-            }
-            import re
-            words = set(re.findall(r'\b\w+\b', user_input.lower()))
-            # Require 2+ keywords to classify as Indonesian (avoids single-word false positives)
-            detected_lang = "id" if len(words) >= 3 and len(words.intersection(id_keywords)) >= 2 else "en"
-
-        lang_name = "English" if detected_lang in ("en", "English") else "Indonesian"
+        target_lang = cognitive_decision.get("language") or self.language
+        lang_name = "Indonesian" if str(target_lang).lower().startswith("id") else "English"
         context_parts.append(f"[Spoken Language: {lang_name}. You MUST respond in {lang_name}.]")
 
         if image_b64:

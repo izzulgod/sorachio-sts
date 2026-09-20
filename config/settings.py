@@ -223,6 +223,8 @@ class SystemConfig(BaseModel):
     log_level: str = "INFO"
     log_dir: str = "logs"
     data_dir: str = "data"
+    language: str = "en"
+
 
 
 class VisionConfig(BaseModel):

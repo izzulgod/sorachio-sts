@@ -9,6 +9,8 @@ system:
   log_level: "INFO"          # DEBUG | INFO | WARNING | ERROR
   log_dir: "logs"
   data_dir: "data"
+  language: "en"             # "en" (Kokoro TTS) or "id" (Piper TTS) — toggle runtime via Tab/L
+
 
 # =============================================================================
 # Vision (Multimodal) Configuration
@@ -75,7 +77,7 @@ audio:
 # =============================================================================
 stt:
   model_size: "small"             # Optimized small model (460MB) — 3x faster than medium on CPU (~1.5s vs 6s)
-  language: "auto"                # "auto" = auto-detect id/en, or pin to "en"/"id"
+  language: "en"                  # Manual language control: "en" or "id" (runtime toggle via Tab / L)
   threads: 8                      # 8 CPU threads for high-speed multi-core decoding
   beam_size: 1                    # Greedy search (beam 1) — instant real-time transcription
   temperature: 0.0

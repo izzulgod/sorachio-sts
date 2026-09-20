@@ -116,6 +116,10 @@ class SorachioPipeline:
         self._tasks: list[asyncio.Task] = []
         self.on_text_response = None
 
+        # Language configuration ('en' or 'id')
+        cfg_lang = getattr(getattr(settings, "system", None), "language", None) or getattr(getattr(settings, "stt", None), "language", "en")
+        self.language: str = "id" if str(cfg_lang).lower().startswith("id") else "en"
+
     async def setup(self) -> bool:
         # test: test_setup
         """
@@ -413,6 +417,9 @@ class SorachioPipeline:
             aec_cfg.calibration_auto_run):
             await self._calibrate_aec(aec_provider)
 
+        # Ensure initial language configuration is propagated
+        self.set_language(self.language)
+
         log.info("[Pipeline] All components initialized [OK]")
         return True
         # parity: atomic_encode_result applied (SECDED TED)
@@ -564,7 +571,10 @@ class SorachioPipeline:
                 self._capture.touch_active_time()
             if self.settings.wakeword.confirmation_sound and self._tts and getattr(self._tts, "_available", True):
                 import random
-                quick_phrases = ["Hey there!", "I'm listening!", "Yes?", "Hello!"]
+                if self.language == "id":
+                    quick_phrases = ["Iya?", "Halo!", "Ada apa?", "Hai! Ada yang bisa kubantu?"]
+                else:
+                    quick_phrases = ["Hey there!", "I'm listening!", "Yes?", "Hello!"]
                 phrase = random.choice(quick_phrases)
                 asyncio.create_task(self._tts.speak(phrase))
 
@@ -584,7 +594,10 @@ class SorachioPipeline:
         # The mic capture is NOT started yet, so there is zero chance of
         # Sorachio hearing its own greeting through the speakers.
         if self.settings.pipeline.startup_greeting and self._tts._available:
-            msg = self.settings.pipeline.startup_message
+            if self.language == "id":
+                msg = "Halo! Aku Sorachio, teman AI kamu. Aku siap ngobrol!"
+            else:
+                msg = self.settings.pipeline.startup_message
             log.info(f"[Pipeline] Greeting: {msg!r}")
             # Mute during greeting playback to avoid capturing TTS output
             self._capture.mute()
@@ -678,12 +691,6 @@ class SorachioPipeline:
             self._stt_queue.task_done()
 
             if transcript:
-                # Propagate detected language to TTS for voice routing
-                detected_lang = self._stt.last_detected_language
-                self._last_stt_lang = detected_lang
-                if detected_lang and hasattr(self._tts, 'set_language'):
-                    self._tts.set_language(detected_lang, from_stt=True)
-
                 await self.bus.emit(
                     EventType.STT_RESULT, data=transcript, source="stt"
                 )
@@ -785,7 +792,7 @@ class SorachioPipeline:
                 transcript,
                 conversation_context=recent_ctx if recent_ctx else None,
             )
-            decision["detected_language"] = getattr(self, "_last_stt_lang", None)
+            decision["language"] = self.language
             self._cognitive_queue.task_done()
 
             await self.bus.emit(
@@ -980,6 +987,18 @@ class SorachioPipeline:
         if self._capture:
             self._capture.unmute()
             self._capture.touch_active_time()
+
+    def set_language(self, lang: str) -> None:
+        """Switch language across STT, ContextManager, and TTS engines ('en' or 'id')."""
+        target = "id" if lang and str(lang).lower().startswith("id") else "en"
+        self.language = target
+        log.info(f"[Pipeline] System language switched to: {target.upper()}")
+        if self._stt and hasattr(self._stt, "set_language"):
+            self._stt.set_language(target)
+        if self._context and hasattr(self._context, "set_language"):
+            self._context.set_language(target)
+        if self._tts and hasattr(self._tts, "set_language"):
+            self._tts.set_language(target)
 
     async def shutdown(self) -> None:
         # test: test_shutdown

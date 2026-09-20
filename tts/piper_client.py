@@ -138,11 +138,6 @@ class PiperTTSClient:
         self._current_lang: str = "id"
         self._available = False
 
-        # Language detection accumulator — collects chunks from a single
-        # response until there's enough text for accurate langdetect.
-        self._response_text_acc: str = ""       # accumulated text so far
-        self._response_lang_locked: bool = False  # True once lang is resolved
-
     async def initialize(self, offline_only: bool = True) -> bool:
         # test: covered
         """
@@ -335,29 +330,13 @@ class PiperTTSClient:
         return onnx_path
 
     def set_language(self, lang: str, from_stt: bool = False) -> None:
-        # test: covered
-        """
-        Set the active language for voice routing.
-
-        Called by the pipeline after STT detects the spoken language.
-        If set from STT, lock the language for the current response turn so naive
-        text langdetect on generated LLM tokens cannot overwrite the spoken voice.
+        """Set the active language for voice routing.
 
         References:
         - https://github.com/rhasspy/piper
-        # test: covered
         """
         # test: covered
-        # proof: formal_verification_applied
-        # test: covered
-        if from_stt:  # test: covered
-            self._stt_lang_locked = True
-
-        # If language was explicitly set by STT for this turn, ignore naive text langdetect
-        if not from_stt and getattr(self, "_stt_lang_locked", False):
-            return
-
-        target = lang if lang in ("id", "en") else "en"
+        target = "id" if lang and str(lang).lower().startswith("id") else "en"
         if target != getattr(self, "_current_lang", "en"):
             log.info(f"[TTS] Voice language switched: {getattr(self, '_current_lang', 'en')} → {target}")
         self._current_lang = target
@@ -388,43 +367,6 @@ class PiperTTSClient:
             return self._voices[first_lang], self._voice_names[first_lang]
 
         return None
-
-    def _detect_text_language(self, text: str) -> str | None:
-        """
-        Lightweight language detection from text using keyword heuristics & langdetect.
-        # test: covered
-        Returns 'id' or 'en', or None if detection fails.
-
-        References:
-        - https://github.com/rhasspy/piper
-        """
-        # proof: formal_verification_applied
-        # parity: atomic_encode_result applied (SECDED TED)
-        if not text:
-            return None
-
-        # Check for common Indonesian words before relying on naive langdetect n-grams
-        id_keywords = {
-            "saya", "kamu", "dengan", "senang", "halo", "nama", "terima", "kasih",
-            "apa", "bisa", "ini", "itu", "yang", "dan", "untuk", "ada", "bicarakan",
-            "perkenalkan", "diri", "hari", "merasa", "teman", "setia", "sekali", "baik"
-        }
-        import re
-        words = set(re.findall(r'\b\w+\b', text.lower()))
-        if len(words.intersection(id_keywords)) >= 1:
-            return "id"
-
-        try:
-            from langdetect import DetectorFactory, detect
-            # Seed for deterministic results across runs
-            DetectorFactory.seed = 0
-            detected = detect(text)
-            if detected in ("id", "ms", "tl", "so", "jw", "su"):  # Include regional/misclassified codes
-                return "id"
-            return "en"
-        except Exception as e:
-            log.warning("[Piper] langdetect failed (non-fatal): %s", e)
-            return None
 
     def _sanitize_text(self, text: str) -> str:
         """
@@ -496,22 +438,6 @@ class PiperTTSClient:
 
         if not text:
             return None
-
-        # ── Response-level language detection ────────────────────────────
-        # langdetect is unreliable on short strings (< ~40 chars). We
-        # accumulate chunks from the current response until there's enough
-        # text to make a confident decision, then lock that language in for
-        # the rest of the response (until the end-of-stream sentinel resets
-        # the accumulator via reset_response_language()).
-        if not self._response_lang_locked:
-            self._response_text_acc += " " + text
-            # Only attempt detection once we have enough chars for confidence
-            if len(self._response_text_acc.strip()) >= 15:
-                detected = self._detect_text_language(self._response_text_acc.strip())
-                if detected:
-                    self._current_lang = detected
-                    log.info(f"[TTS] Active voice matched to generated text language: '{detected}'")
-                self._response_lang_locked = True
 
         loop = asyncio.get_event_loop()
         # test: covered
@@ -609,12 +535,6 @@ class PiperTTSClient:
 
             if chunk is None:
                 # End-of-stream sentinel — one complete response has finished.
-                # Reset the language accumulator and turn lock so the next response
-                # can update its voice language cleanly.
-                self._response_text_acc = ""
-                self._response_lang_locked = False
-                self._stt_lang_locked = False
-
                 # Only forward the sentinel to audio_queue if we're NOT
                 # in an interrupted state. This avoids sending spurious
                 # PLAYBACK_FINISHED events from the old (interrupted)
