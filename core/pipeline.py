@@ -119,6 +119,7 @@ class SorachioPipeline:
         # Language configuration ('en' or 'id')
         cfg_lang = getattr(getattr(settings, "system", None), "language", None) or getattr(getattr(settings, "stt", None), "language", "en")
         self.language: str = "id" if str(cfg_lang).lower().startswith("id") else "en"
+        self._enable_tts: bool = True
 
     async def setup(self) -> bool:
         # test: test_setup
@@ -270,6 +271,7 @@ class SorachioPipeline:
             temperature=pc_cfg.temperature,
             max_tokens=pc_cfg.max_tokens,
         )
+        self._personality.enable_tts = self._enable_tts
 
         # ---- TTS ----
         from tts.kokoro_client import KokoroTTSClient
@@ -841,7 +843,6 @@ class SorachioPipeline:
             try:
                 # Dispatch action (conversation, move, look, remember, search, multi)
                 log.info(f"[Cognitive] Dispatching action: {decision.get('action', 'conversation')}")
-                await self.bus.emit(EventType.RESPONSE_START, source="cognitive")
                 response = await self._action_dispatcher.dispatch(
                     decision=decision,
                     transcript=transcript,
@@ -875,11 +876,13 @@ class SorachioPipeline:
                     else:
                         response = "I'm sorry, I couldn't process that. Could you say it again?"
                     log.warning(f"[Cognitive] Empty response — injecting fallback: {response!r}")
-                    await self._tts_chunk_queue.put(response)
+                    if self._enable_tts and self._tts_chunk_queue:
+                        await self._tts_chunk_queue.put(response)
                     await self.bus.emit(EventType.RESPONSE_TOKEN, data=response, source="cognitive")
 
                 # End-of-stream sentinel for TTS (must come AFTER all chunks/fallback are queued)
-                await self._tts_chunk_queue.put(None)
+                if self._enable_tts and self._tts_chunk_queue:
+                    await self._tts_chunk_queue.put(None)
 
                 await self._context.store_interaction(
                     user_input=transcript,
@@ -999,6 +1002,22 @@ class SorachioPipeline:
             self._context.set_language(target)
         if self._tts and hasattr(self._tts, "set_language"):
             self._tts.set_language(target)
+
+    @property
+    def enable_tts(self) -> bool:
+        """Whether TTS audio synthesis and playback is enabled."""
+        return self._enable_tts
+
+    @enable_tts.setter
+    def enable_tts(self, val: bool) -> None:
+        self.set_tts_enabled(val)
+
+    def set_tts_enabled(self, enabled: bool) -> None:
+        """Enable or disable TTS synthesis and playback dynamically."""
+        self._enable_tts = bool(enabled)
+        log.info(f"[Pipeline] TTS enabled set to: {self._enable_tts}")
+        if self._personality:
+            self._personality.enable_tts = self._enable_tts
 
     async def shutdown(self) -> None:
         # test: test_shutdown

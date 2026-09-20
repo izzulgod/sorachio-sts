@@ -103,6 +103,7 @@ class PersonalityCore:
         )
 
         self._current_task: asyncio.Task | None = None
+        self.enable_tts: bool = True
         self._full_response: str = ""
 
         # test: test_generate_streaming
@@ -120,6 +121,9 @@ class PersonalityCore:
         chunks_sent = 0
 
         log.info("[Personality] Starting streaming generation")
+
+        from core.events import EventType, get_bus
+        await get_bus().emit(EventType.RESPONSE_START, source="personality")
 
         try:
             token_stream = self.client.stream(
@@ -161,16 +165,17 @@ class PersonalityCore:
                 if self.interrupt_event.is_set():
                     break
 
-                # Put chunk in TTS queue (non-blocking with timeout)
-                try:
-                    await asyncio.wait_for(
-                        self.tts_queue.put(chunk),
-                        timeout=5.0,
-                    )
-                    chunks_sent += 1
-                    log.debug(f"[Personality] → TTS queue: {chunk!r}")
-                except asyncio.TimeoutError:
-                    log.warning("[Personality] TTS queue full — dropping chunk")
+                # Put chunk in TTS queue if enabled (non-blocking with timeout)
+                if self.enable_tts and self.tts_queue is not None:
+                    try:
+                        await asyncio.wait_for(
+                            self.tts_queue.put(chunk),
+                            timeout=5.0,
+                        )
+                        chunks_sent += 1
+                        log.debug(f"[Personality] → TTS queue: {chunk!r}")
+                    except asyncio.TimeoutError:
+                        log.warning("[Personality] TTS queue full — dropping chunk")
 
             # NOTE: End-of-stream sentinel (None) is sent by the pipeline's
             # _cognitive_worker after dispatch() returns, NOT here.

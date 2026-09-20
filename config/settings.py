@@ -255,7 +255,7 @@ class RobotConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    enable_web_search: bool = False
+    enable_web_search: bool = True
     enable_multi_action: bool = True
     action_timeout_s: float = 10.0
     max_subactions: int = 5

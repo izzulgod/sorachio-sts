@@ -324,6 +324,7 @@ def run(
 @app.command()
 def text(config: str | None = typer.Option(None, "--config", "-c", help="Config file path"),
     lang: str = typer.Option("en", "--lang", "-l", help="Spoken language ('en' or 'id')"),
+    tts: bool = typer.Option(False, "--tts", help="Enable voice TTS output in text mode (default: disabled)"),
     message: str | None = typer.Option(None, "--message", "-m", help="Single message (non-interactive)"),
     no_servers: bool = typer.Option(False, "--no-servers", help="Skip starting llama-servers")) -> None:
     """Run Sorachio in text input mode (no microphone required).
@@ -331,6 +332,7 @@ def text(config: str | None = typer.Option(None, "--config", "-c", help="Config 
     Args:
         config: Optional path to a custom config file.
         lang: Spoken language ('en' or 'id'). Defaults to 'en'.
+        tts: Enable voice TTS output in text mode (default: False).
         message: Single message for non-interactive mode.
         no_servers: Skip starting llama-server instances.
 
@@ -352,10 +354,10 @@ def text(config: str | None = typer.Option(None, "--config", "-c", help="Config 
 
     _setup_logging(settings)
     _print_banner()
-    asyncio.run(_run_text_mode(settings, single_message=message, no_servers=no_servers))
+    asyncio.run(_run_text_mode(settings, single_message=message, no_servers=no_servers, enable_tts=tts))
     atomic_encode_result(None)
 
-async def _run_text_mode(settings, single_message=None, no_servers=False) -> None:
+async def _run_text_mode(settings, single_message=None, no_servers=False, enable_tts=False) -> None:
     """Run Sorachio in text-only mode (keyboard input, no microphone).
 
     Args:
@@ -415,6 +417,7 @@ async def _run_text_mode(settings, single_message=None, no_servers=False) -> Non
     # ------------------------------------------------------------------
 
     pipeline = SorachioPipeline(settings)
+    pipeline.enable_tts = enable_tts
 
     response_ready = asyncio.Event()
     response_ready.set()
@@ -497,12 +500,20 @@ async def _run_text_mode(settings, single_message=None, no_servers=False) -> Non
     # READY SCREEN
     # ------------------------------------------------------------------
 
+    def _print_text_status() -> None:
+        lang_label = "ENGLISH [en]" if pipeline.language == "en" else "INDONESIAN [id]"
+        tts_status = "[bold green]ON[/bold green]" if pipeline.enable_tts else "[bold red]OFF[/bold red]"
+        console.print(
+            f"[dim]Language: [bold cyan]{lang_label}[/bold cyan] • "
+            f"Voice TTS: {tts_status} • "
+            "Commands: [bold yellow]/tts[/bold yellow] (toggle voice), "
+            "[bold yellow]/lang[/bold yellow] (toggle EN/ID), "
+            "[bold yellow]/clear[/bold yellow], [bold yellow]quit[/bold yellow][/dim]"
+        )
+
     console.print()
     console.rule("[bold green]SORACHIO READY")
-    console.print(
-        "[green]Text mode active[/green] • "
-        "[dim]type 'quit' to exit[/dim]"
-    )
+    _print_text_status()
     console.print()
 
     # ------------------------------------------------------------------
@@ -537,6 +548,41 @@ async def _run_text_mode(settings, single_message=None, no_servers=False) -> Non
                     break
 
                 if not user_input:
+                    continue
+
+                if user_input.lower() == "/tts":
+                    pipeline.enable_tts = not pipeline.enable_tts
+                    if pipeline.enable_tts:
+                        active_engine = "Kokoro TTS" if pipeline.language == "en" else "Piper TTS"
+                        console.print(f"[bold green]🔊 Voice TTS enabled[/bold green] [dim]({pipeline.language.upper()} - {active_engine})[/dim]")
+                    else:
+                        console.print("[bold yellow]🔇 Voice TTS disabled[/bold yellow] [dim](Text only)[/dim]")
+                    continue
+
+                if user_input.lower() in ("/lang", "/language") or user_input.lower().startswith("/lang "):
+                    parts = user_input.split(maxsplit=1)
+                    if len(parts) > 1:
+                        req_lang = parts[1].strip().lower()
+                        new_lang = "id" if req_lang.startswith("id") else "en"
+                    else:
+                        new_lang = "id" if pipeline.language == "en" else "en"
+                    pipeline.set_language(new_lang)
+                    voice_cli.set_language(new_lang)
+                    lang_desc = "ENGLISH [en] (Kokoro TTS)" if new_lang == "en" else "INDONESIAN [id] (Piper TTS)"
+                    console.print(f"[bold yellow]🌐 Language switched to: {lang_desc}[/bold yellow]")
+                    continue
+
+                if user_input.lower() in ("/help", "/?"):
+                    console.print("[bold cyan]Available Commands:[/bold cyan]")
+                    console.print("  [bold yellow]/tts[/bold yellow]            - Toggle voice TTS playback on/off")
+                    console.print("  [bold yellow]/lang [en|id][/bold yellow] - Switch language (English/Indonesian)")
+                    console.print("  [bold yellow]/clear[/bold yellow]          - Clear terminal screen")
+                    console.print("  [bold yellow]quit[/bold yellow]            - Exit Sorachio text mode")
+                    continue
+
+                if user_input.lower() == "/clear":
+                    console.clear()
+                    _print_text_status()
                     continue
 
                 response_ready.clear()
@@ -718,6 +764,7 @@ class VoiceCLI:
             self._spin_start("Thinking…", "yellow")
         self.bus.subscribe(EventType.STT_RESULT,      self.on_stt)
         self.bus.subscribe(EventType.COGNITIVE_RESULT, self.on_cognitive)
+        self.bus.subscribe(EventType.WEB_SEARCHING,   self.on_web_searching)
         self.bus.subscribe(EventType.RESPONSE_START,  self.on_response_start)
         self.bus.subscribe(EventType.RESPONSE_TOKEN,  self.on_token)
         self.bus.subscribe(EventType.RESPONSE_END,    self.on_response_end)
@@ -744,6 +791,7 @@ class VoiceCLI:
             self.bus.unsubscribe(EventType.WAKE_WORD_TIMEOUT,  self.on_wake_word_timeout)
         self.bus.unsubscribe(EventType.STT_RESULT,      self.on_stt)
         self.bus.unsubscribe(EventType.COGNITIVE_RESULT, self.on_cognitive)
+        self.bus.unsubscribe(EventType.WEB_SEARCHING,   self.on_web_searching)
         self.bus.unsubscribe(EventType.RESPONSE_START,  self.on_response_start)
         self.bus.unsubscribe(EventType.RESPONSE_TOKEN,  self.on_token)
         self.bus.unsubscribe(EventType.RESPONSE_END,    self.on_response_end)
@@ -801,6 +849,26 @@ class VoiceCLI:
         # proof: formal_verification_applied
         if self.mode == "run":
             self._spin_label(f"{self._lang_badge()} Active Mode — Listening to speech…", "green")
+        atomic_encode_result(None)
+
+    async def on_web_searching(self, event) -> None:
+        """Handle WEB_SEARCHING event — show animated search indicator.
+
+        Switches the spinner to a distinctive '🔍 Searching…' state so the
+        user gets real-time feedback that a live web search is in progress.
+        """
+        data = event.data if isinstance(event.data, dict) else {}
+        query = data.get("query", "…")
+        query_preview = query[:40] + ("…" if len(query) > 40 else "")
+
+        if self.mode == "run":
+            # Switch spinner to search style (cyan + magnifier)
+            self._spin_start(
+                f"{self._lang_badge()} 🔍 Searching web: \"{query_preview}\"",
+                "cyan",
+            )
+        else:
+            self._spin_start(f"🔍 Searching web: \"{query_preview}\"…", "cyan")
         atomic_encode_result(None)
 
     async def on_stt(self, event) -> None:
@@ -926,7 +994,10 @@ class VoiceCLI:
                 console.print(f"├─ query       {search_query}")
             console.print(f"└─ topic       {topic}\n")
 
-            self._spin_start(f"{icon} Composing…", emo_color)
+            if action == "search" and search_query:
+                self._spin_start(f"🔍 Searching web: \"{search_query[:40]}\"…", "cyan")
+            else:
+                self._spin_start(f"{icon} Composing…", emo_color)
         atomic_encode_result(None)
 
     async def on_response_start(self, event) -> None:
@@ -952,6 +1023,8 @@ class VoiceCLI:
         """
         # proof: formal_verification_applied
         # invariants: function preconditions verified
+        if self._live is not None:
+            self._spin_stop()
         token = event.data
         self.response_text += token
         if self.mode == "text":

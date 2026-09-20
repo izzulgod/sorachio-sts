@@ -103,7 +103,7 @@ Action Rules:
 - "move": Commands to move, drive, turn, rotate, stop (e.g., "maju 2 meter"). Set robot_params.
 - "look": Commands asking to see/describe objects via camera (e.g., "lihat ini"). Set vision_params.
 - "remember": Storing crucial facts about user (e.g., "ingat nama teman saya"). Set store_memory=true.
-- "search": Queries requiring live web search/facts (e.g., "siapa presiden indonesia"). Set search_params.query.
+- "search": Live web search, current facts, news, queries asking to search or find information (e.g., "cari di internet...", "search for...", "search web...", "carikan info...", "cari info...", "berita terkini", "siapa presiden..."). MUST set search_params.query to the core search query. THIS IS CRITICAL — if user says to search the web, action MUST be "search".
 - "multi": Utterances requiring multiple sequential actions. Put subactions in list.
 
 Examples:
@@ -179,6 +179,17 @@ class CognitiveGateway:
             }
 
         # -------------------------------------------------------------------
+        # Fast-path: deterministic search intent detection
+        # Bypasses LLM1 for unambiguous search queries (0ms latency, zero context overflow)
+        # -------------------------------------------------------------------
+        pre_decision = self._apply_search_override(transcript, {**DEFAULT_DECISION})
+        if pre_decision.get("action") == "search":
+            log.info(
+                f"[Gateway] Fast-path search matched — query={pre_decision['search_params']['query']!r}"
+            )
+            return pre_decision
+
+        # -------------------------------------------------------------------
         # Build prompt
         # -------------------------------------------------------------------
 
@@ -223,10 +234,18 @@ class CognitiveGateway:
             decision = self._parse_json(raw)
             decision = self._validate_decision(decision)
 
+            # ── Keyword-based search override ──────────────────────────────
+            # Small models (0.5B) frequently mis-classify search intents.
+            # If transcript contains strong search-intent signals and action
+            # was not already set to 'search', force it and extract query.
+            if decision.get("action") != "search":
+                decision = self._apply_search_override(transcript, decision)
+
             log.info(
                 f"[Gateway] "
                 f"respond={decision['respond']} "
                 f"emotion={decision['emotion']} "
+                f"action={decision['action']} "
                 f"topic={decision['topic']} "
                 f"importance={decision['importance']:.2f}"
             )
@@ -240,7 +259,7 @@ class CognitiveGateway:
                 exc_info=True,
             )
 
-            return {**DEFAULT_DECISION}
+            return self._apply_search_override(transcript, {**DEFAULT_DECISION})
 
     # -----------------------------------------------------------------------
     # JSON parsing + repair
@@ -390,6 +409,82 @@ class CognitiveGateway:
         )
 
         return {}
+
+    # -----------------------------------------------------------------------
+    # Keyword-based search override (safety net for small models)
+    # -----------------------------------------------------------------------
+
+    # Strong search-intent patterns (Indonesian + English)
+    # NOTE: Keep SPECIFIC to avoid false positives on normal conversation.
+    _SEARCH_KEYWORDS: tuple[str, ...] = (
+        # Indonesian — explicit search commands
+        "cari di internet", "carikan di internet", "cari di web", "carikan di web",
+        "cari di google", "carikan di google",
+        "cari info", "carikan info", "cari informasi", "carikan informasi",
+        "search web", "search the web", "search the internet", "search di internet", "search di google",
+        "berita terkini", "berita hari ini", "kabar terbaru",
+        "info terbaru", "update terbaru",
+        "siapa presiden", "berapa harga",
+        "cari tau tentang", "cari tahu tentang", "cari tau", "cari tahu",
+        "tolong cari", "tolong carikan", "coba cari", "coba carikan",
+        # English — explicit search commands
+        "search the web", "search the internet",
+        "search for", "look up",
+        "find info about", "find information about",
+        "what is the latest news", "browse the web",
+        "current news about",
+    )
+
+    def _apply_search_override(self, transcript: str, decision: dict[str, Any]) -> dict[str, Any]:
+        """Force action='search' when transcript contains unambiguous search-intent keywords.
+
+        This is a deterministic safety net because small 0.5B models frequently
+        mis-classify explicit search requests as 'conversation'.
+        """
+        t_lower = transcript.lower().strip()
+
+        # Check if any search keyword appears in the transcript
+        matched = any(kw in t_lower for kw in self._SEARCH_KEYWORDS)
+        if not matched:
+            return decision
+
+        # Clean query by stripping search triggers and leading connectors iteratively
+        query = transcript.strip()
+        pattern = (
+            r"^(?:(?:tolong|coba|please|can\s+you)\s+)?"
+            r"(?:search(?:\s+(?:the|di))?\s+(?:web|internet|google)|search\s+for|"
+            r"cari(?:kan)?(?:\s+(?:info(?:rmasi)?|tau|tahu))?(?:\s+di\s+(?:internet|web|google))?|"
+            r"look\s+up|find(?:\s+information|\s+info)?(?:\s+about)?)\s*"
+        )
+        for _ in range(3):
+            new_q = re.sub(pattern, "", query, flags=re.IGNORECASE).strip()
+            # Strip connector words
+            new_q = re.sub(
+                r"^(?:soal|tentang|for|about|mengenai|untuk|pada|terkait|di\s+(?:internet|web|google))\s+",
+                "",
+                new_q,
+                flags=re.IGNORECASE,
+            ).strip()
+            if new_q == query:
+                break
+            query = new_q
+
+        # If LLM already extracted a cleaner query, prefer that
+        existing_query = (decision.get("search_params") or {}).get("query", "")
+        if existing_query and len(existing_query) < len(query):
+            query = existing_query
+
+        if not query:
+            query = transcript.strip()
+
+        log.info(
+            f"[Gateway] ⚠️ Search keyword override: forced action=search, query={query!r}"
+        )
+        decision["action"] = "search"
+        decision["topic"] = "web_search"
+        decision["search_params"] = {"query": query}
+        decision["respond"] = True
+        return decision
 
     # -----------------------------------------------------------------------
     # Validation + normalization

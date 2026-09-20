@@ -65,6 +65,7 @@ class EventType(Enum):
 
     # Cognitive
     COGNITIVE_RESULT = auto()
+    WEB_SEARCHING = auto()       # emitted just before web search starts
 
     # LLM #2
     RESPONSE_START = auto()

@@ -102,7 +102,7 @@ llm:
     server_url: "http://127.0.0.1:8001"
     model_dir: "models/llm1"         # Auto-scan: picks largest .gguf
     # model_path: auto-detected      # Override: set explicit path to skip auto-scan
-    n_ctx: 1024                      # Limit context size to avoid massive memory allocation for KV cache
+    n_ctx: 2048                      # 2048 context allows conversation history without 400 errors
     n_batch: 256                     # Prompt eval batch size (256 is optimal for short JSON prompts)
     n_threads: 6                     # 6 threads optimal for small 0.5B models
     n_threads_batch: 6               # Use 6 threads for prompt eval batch processing
@@ -254,7 +254,7 @@ robot:
 # Agentic Action Engine Configuration
 # =============================================================================
 agent:
-  enable_web_search: false            # DuckDuckGo instant answer web search
+  enable_web_search: true             # DuckDuckGo instant answer web search
   enable_multi_action: true           # Support sequential multi-action chains
   action_timeout_s: 10.0
   max_subactions: 5

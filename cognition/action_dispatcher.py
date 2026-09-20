@@ -161,8 +161,16 @@ class ActionDispatcher:
         image_b64: str | None = None,
     ) -> str:
         """Live web search action."""
+        from core.events import EventType, get_bus
         search_params = decision.get("search_params") or {}
         query = search_params.get("query") or transcript
+
+        # Notify CLI that search is starting (for spinner/indicator)
+        await get_bus().emit(
+            EventType.WEB_SEARCHING,
+            data={"query": query},
+            source="dispatcher",
+        )
 
         search_text = ""
         if self._web_search:
