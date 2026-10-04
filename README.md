@@ -17,7 +17,7 @@ In voice mode, the pipeline monitors microphone input in **IDLE Mode** for wake 
 ![Sorachio-STS Voice Mode](docs/ss-run.png)
 
 #### 2. Interactive Text Mode (`python main.py text`)
-In text mode, you can interact with the companion using keyboard inputs. Ideal for testing prompts, inspecting Cognitive Gateway JSON action decisions, and validating tool dispatching without a microphone.
+In text mode, you can interact with the companion using keyboard inputs. Ideal for testing prompts, inspecting Cognitive Gateway JSON action decisions, and validating tool dispatching without a microphone. TTS is **optional** in text mode — off by default, toggle with `/tts`.
 
 ![Sorachio-STS Text Mode](docs/ss-txt.png)
 
@@ -37,14 +37,16 @@ In text mode, you can interact with the companion using keyboard inputs. Ideal f
 10. [Running the System](#10-running-the-system)
 11. [Configuration Guide](#11-configuration-guide)
 12. [Cognitive Gateway & Action Planning](#12-cognitive-gateway--action-planning)
-13. [Acoustic Intelligence Layer](#13-acoustic-intelligence-layer)
-14. [Bilingual Language Routing](#14-bilingual-language-routing)
-15. [Streaming Pipeline Explained](#15-streaming-pipeline-explained)
-16. [Memory Architecture](#16-memory-architecture)
-17. [CLI Reference](#17-cli-reference)
-18. [MBG System](#18-mbg-system)
-19. [Troubleshooting](#19-troubleshooting)
-20. [Future Robotics Expansion](#20-future-robotics-expansion)
+13. [Web Search Engine](#13-web-search-engine)
+14. [Acoustic Intelligence Layer](#14-acoustic-intelligence-layer)
+15. [Bilingual Language Routing](#15-bilingual-language-routing)
+16. [Streaming Pipeline Explained](#16-streaming-pipeline-explained)
+17. [Memory Architecture](#17-memory-architecture)
+18. [Text Mode Reference](#18-text-mode-reference)
+19. [CLI Reference](#19-cli-reference)
+20. [MBG System](#20-mbg-system)
+21. [Troubleshooting](#21-troubleshooting)
+22. [Future Robotics Expansion](#22-future-robotics-expansion)
 
 ---
 
@@ -65,11 +67,12 @@ The system is designed from the ground up as a **modular companion operating sys
 | **Two-LLM Architecture** | Agentic Action Planner (LLM #1) + Personality Core (LLM #2) |
 | **Agentic Action Engine** | Autonomous action execution (`move`, `look`, `search`, `remember`, `multi`) via modular dispatcher |
 | **Robotics Modular HAL** | Hardware Abstraction Layer with `MockRobotController` (laptop/dev) and `ESP32RobotController` (serial/HTTP) |
-| **Live Web Search** | Optional real-time web search via DuckDuckGo engine (`utils/web_search.py`) |
+| **Live Web Search** | Multi-engine ISP-resilient search (Bing → Google News RSS → DuckDuckGo → Wikipedia fallback chain) |
+| **Search Indicator** | Animated `🔍 Searching web: "..."` spinner shown in CLI during search execution |
 | **Model-Agnostic** | Auto-detects any GGUF model in `models/llm1/` and `models/llm2/` — drop & restart |
 | **Vision Ready** | LLM #2 supports multimodal input via `mmproj` projector |
-| **Bilingual** | Automatic English / Indonesian language detection & voice routing |
-| **Interruptible** | VAD-based barge-in stops playback instantly; self-interrupt shielded |
+| **Bilingual** | Manual English / Indonesian language selection; runtime toggle via `/lang` command or `L` key |
+| **Barge-In** | VAD-based barge-in — disabled by default for open-speaker setups (`enable_interruption: false`) |
 | **Adaptive AEC** | Calibration-based room impulse response echo cancellation (3s chirp sweep + Wiener/LMS filter) |
 | **Deep Buffer Reset** | OpenWakeWord preprocessor buffer clearing to guarantee zero ghost triggers |
 | **Vector Memory** | ChromaDB semantic search + sentence-transformers embeddings for LTM (offline) |
@@ -83,9 +86,9 @@ The system is designed from the ground up as a **modular companion operating sys
 | Slot | Model | Size | Role | Local Path |
 |------|-------|------|------|------------|
 | Wake Word | OpenWakeWord ONNX (`alexa`, `hey_jarvis`, etc.) | ~5 MB | Instant wake word detection | `models/wakeword/` |
-| LLM #1 | Qwen2.5-Coder-0.5B-Instruct (Q8_0) | ~644 MB | Agentic Action Planner (JSON action router) | `models/llm1/` |
+| LLM #1 | Qwen2.5-Coder-1.5B-Instruct (Q4_K_M) | ~1.1 GB | Agentic Action Planner (JSON action router) | `models/llm1/` |
 | LLM #2 | Qwen3.5-4B (Q4_K_M) | ~2.6 GB | Personality Core (conversation) + **Vision** | `models/llm2/` |
-| STT | faster-whisper medium | ~1.5 GB | Speech-to-Text (multilingual ID/EN, high accuracy) | `models/stt/` |
+| STT | faster-whisper small | ~460 MB | Speech-to-Text (multilingual ID/EN, fast CPU) | `models/stt/` |
 | TTS (EN) | Kokoro-82M (`af_heart`) | ~327 MB | English female voice — 24kHz native | `models/tts/kokoro/` |
 | TTS (ID) | Piper `id_ID-news_tts-medium` | ~67 MB | Indonesian female voice — 22.05kHz→24kHz | `models/tts/` |
 | Vector Embed | all-MiniLM-L6-v2 | ~90 MB | Semantic memory embeddings (offline) | `models/vector/all-MiniLM-L6-v2/` |
@@ -145,29 +148,30 @@ The system is designed from the ground up as a **modular companion operating sys
 |                                      +----------------------+   |   +------+      |
 |                                      |                          |          |      |
 |                                      v                          v          v      |
-|                            +-------------------+          +----------+ +----+     |
-|                            | Actuators (HAL)   |          | WebSearch| |LTM |     |
-|                            | Mock / Micro-     |          | (DuckDuck| |Vector    |
-|                            | controller (Move) |          |  Go)     | |Memory    |
-|                            +-------------------+          +----------+ +----+     |
-|                                                                            |      |
-|                                                                            v      |
-|                                                          +---------------+        |
-|                                                          | Personality   |        |
-|                                                          | Worker        |        |
-|                                                          | (LLM #2)      |        |
-|                                                          +-------+-------+        |
-|                                                                  | stream         |
-|                                                                  v                |
-|                                                          +---------------+        |
-|                                                          | Hybrid TTS    |        |
-|                                                          | Kokoro / Piper|        |
-|                                                          +-------+-------+        |
-|                                                                  | audio          |
-|                                                                  v                |
-|                                                              +-------+            |
-|                                                              |Speaker|            |
-|                                                              +-------+            |
+|                            +-------------------+  +------------------+ +----+     |
+|                            | Actuators (HAL)   |  | WebSearchEngine  | |LTM |     |
+|                            | Mock / Micro-     |  | 4-engine chain:  | |Vec.|     |
+|                            | controller (Move) |  | Bing->GNews->    | |Mem.|     |
+|                            +-------------------+  | DDG->Wikipedia   | +----+     |
+|                                                   +------------------+            |
+|                                                          |                        |
+|                                                          v                        |
+|                                                  +---------------+                |
+|                                                  | Personality   |                |
+|                                                  | Worker        |                |
+|                                                  | (LLM #2)      |                |
+|                                                  +-------+-------+                |
+|                                                          | stream                 |
+|                                                          v                        |
+|                                                  +---------------+                |
+|                                                  | Hybrid TTS    |                |
+|                                                  | Kokoro / Piper|                |
+|                                                  +-------+-------+                |
+|                                                          | audio                  |
+|                                                          v                        |
+|                                                      +-------+                    |
+|                                                      |Speaker|                    |
+|                                                      +-------+                    |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -182,7 +186,7 @@ The system is designed from the ground up as a **modular companion operating sys
 [WakeWordDetector (OpenWakeWord)] -- confidence >= 0.50
     |
     +--> Plays Instant Confirmation ("Hey there!", "I'm listening!", "Hello!")
-    +--> State transition: IDLE -> ACTIVE (15-second activity window)
+    +--> State transition: IDLE -> ACTIVE (7-second activity window)
     +--> Deep reset preprocessor buffers to prevent ghost triggers
     |
 [User speaks command: "Turn left and search python news"]
@@ -204,7 +208,8 @@ The system is designed from the ground up as a **modular companion operating sys
     |
 [Action Dispatcher]
     |--> RobotController (Mock / Serial / HTTP) -> Executes motion
-    |--> WebSearchEngine (DuckDuckGo) -> Fetches web snippets
+    |--> WebSearchEngine (4-engine fallback) -> Fetches web snippets
+    |       CLI shows: 🔍 Searching web: "python news"... (animated spinner)
     |--> Memory System & Emotion Tracker -> Injects context + search results
     |
 [Context Manager & LLM #2 Personality Core]
@@ -248,7 +253,7 @@ Sorachio-STS/
 |   +-- action_dispatcher.py  # Action dispatcher (actuators, search, memory, LLM2)
 |
 +-- utils/
-|   +-- web_search.py       # DuckDuckGo instant web search engine
+|   +-- web_search.py       # Multi-engine ISP-resilient search (Bing, Google News RSS, DDG, Wikipedia)
 |   +-- logging_setup.py    # Structured logging (Rich + file)
 |   +-- chunk_assembler.py  # Token -> speech chunk converter
 |   +-- rate_limiter.py     # Sliding window rate limiter
@@ -257,7 +262,7 @@ Sorachio-STS/
 |   +-- capture.py          # Webcam snapshot capture (OpenCV)
 |
 +-- stt/
-|   +-- whisper_client.py   # faster-whisper in-process client
+|   +-- whisper_client.py   # faster-whisper in-process client + hallucination filter
 |
 +-- tts/
 |   +-- kokoro_client.py    # Hybrid Kokoro & Piper TTS client
@@ -283,7 +288,7 @@ Sorachio-STS/
 |   +-- server_manager.py   # llama-server lifecycle
 |
 +-- cli/
-|   +-- main.py             # Rich CLI UI (mode spinners, status badges)
+|   +-- main.py             # Rich CLI UI (mode spinners, status badges, text mode commands)
 |
 +-- models/
 |   +-- wakeword/           # OpenWakeWord ONNX models (.onnx + README)
@@ -385,7 +390,7 @@ python main.py run
 
 1. **Download** any GGUF model from Hugging Face.
 2. **Place GGUF files**:
-   - `models/llm1/`: Cognitive Gateway Action Planner (e.g. `qwen2.5-coder-0.5b-instruct-q8_0.gguf`)
+   - `models/llm1/`: Cognitive Gateway Action Planner (e.g. `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf`)
    - `models/llm2/`: Personality Core + Vision (e.g. `Qwen3.5-4B-Q4_K_M.gguf` + `mmproj-BF16.gguf`)
 3. **Restart**: `python main.py run` (auto-detected!).
 
@@ -454,7 +459,7 @@ LLM #1 (Cognitive Gateway) functions as an **Agentic Action Planner**, outputtin
 |--------|-------------------|-------------------|
 | `move` | `direction` (`forward`/`backward`/`left`/`right`), `distance_cm`, `angle_deg`, `speed` | `RobotController.move()` / `rotate()` |
 | `look` | `direction` (`up`/`down`/`left`/`right`), `angle_deg` | `RobotController.look()` |
-| `search` | `query` | `WebSearchEngine.search()` (DuckDuckGo snippets injected into LLM2) |
+| `search` | `query` | `WebSearchEngine.search()` (4-engine fallback snippets injected into LLM2) |
 | `remember` | `fact`, `importance` | `LongTermMemory.store()` (JSON + ChromaDB) |
 | `multi` | `actions: [...]` | Sequential execution of multiple tool calls |
 | `conversation` | N/A | Default pass-through to LLM2 streaming |
@@ -471,8 +476,11 @@ LLM #1 (Cognitive Gateway) functions as an **Agentic Action Planner**, outputtin
 # Full voice mode (Wake Word + Action Engine + STT + Dual LLM + TTS)
 python main.py run
 
-# Interactive text mode (keyboard interface for prompt & action testing)
+# Interactive text mode (keyboard interface — TTS disabled by default)
 python main.py text
+
+# Interactive text mode with TTS enabled from startup
+python main.py text --tts
 
 # Single query text mode
 python main.py text --message "search python news"
@@ -493,40 +501,68 @@ python mbg.py --check
 All master configurations live in `config/sorachio.yaml`.
 
 ```yaml
-# Wake Word Configuration
-wakeword:
-  enabled: true
-  target_words: ["hey_sorachio", "alexa", "hey_jarvis", "hey_mycroft"]
-  threshold: 0.50
-  active_timeout_s: 15.0
-  confirmation_sound: true
-  model_dir: "models/wakeword"
+# -----------------------------------------------------------------------
+# VAD & Voice Activity Detection (Speech Capture Quality Tuning)
+# -----------------------------------------------------------------------
+audio:
+  capture:
+    sample_rate: 16000
+    chunk_duration_ms: 30
+    silence_timeout_ms: 700     # 700ms — allows natural pauses without chopping speech.
+                                # Increase (e.g. 900ms) if speech is still being cut off.
+                                # Decrease (e.g. 500ms) for faster response latency.
+    min_speech_duration_ms: 450 # 450ms — rejects short background sounds & clicks.
+                                # Lower values (e.g. 200ms) accept shorter utterances.
+    vad_aggressiveness: 3       # 0-3 (higher = more aggressive noise rejection)
+    acoustic_gate:
+      enabled: true
+      threshold_dbfs: -35.0    # Calibration guide:
+                               #   -50 dBFS : very quiet room, sensitive mic
+                               #   -40 dBFS : normal room, moderate mic
+                               #   -35 dBFS : noisy (fan, TV, background voices)
+                               #   -30 dBFS : loud / open speaker setup
 
+# -----------------------------------------------------------------------
+# Barge-In / Self-Interruption Control
+# -----------------------------------------------------------------------
+pipeline:
+  enable_interruption: false   # false = disabled for open-speaker setups.
+                               # Prevents Sorachio from hearing its own TTS and
+                               # triggering a self-interruption loop.
+                               # Set to true ONLY when using headphones or AEC hardware.
+  interruption_debounce_frames: 8   # 8 frames x 30ms = 240ms debounce window
+
+# -----------------------------------------------------------------------
 # Robotics HAL Configuration
+# -----------------------------------------------------------------------
 robot:
   controller_type: "mock"    # "mock" for local dev, "esp32" for microcontroller serial/HTTP
   esp32_url: "http://192.168.1.100"
   serial_port: "/dev/ttyUSB0"
   baud_rate: 115200
 
-# STT & Acoustic Settings
+# -----------------------------------------------------------------------
+# STT
+# -----------------------------------------------------------------------
 stt:
-  model_size: "medium"
-  language: "auto"
+  model_size: "small"          # "small" (460 MB) - fast CPU; "medium" (1.5 GB) - higher accuracy
+  language: "en"               # "en" or "id" - manual language control
+  beam_size: 1                 # Greedy search (fastest real-time transcription)
+  compute_type: "int8"         # "int8" (fast CPU), "float16" (GPU), "float32" (accurate)
 
-audio:
-  capture:
-    sample_rate: 16000
-    chunk_duration_ms: 30
-    acoustic_gate:
-      threshold_dbfs: -40.0
-      enabled: true
-
+# -----------------------------------------------------------------------
 # Memory & Vector Store
+# -----------------------------------------------------------------------
 memory:
   long_term:
     use_vector_store: true
     vector_store_path: "data/memory/chroma"
+
+# -----------------------------------------------------------------------
+# Web Search
+# -----------------------------------------------------------------------
+agent:
+  enable_web_search: true      # Enables the 4-engine fallback search pipeline
 ```
 
 ---
@@ -534,6 +570,33 @@ memory:
 ## 12. Cognitive Gateway & Action Planning
 
 LLM #1 is optimized for low-latency JSON routing (<300ms). It interprets user intent, emotional tone, and decides whether physical or digital actions are required.
+
+### Search Intent Override (Deterministic Routing)
+
+The Cognitive Gateway applies a **deterministic keyword-based search override** (`_apply_search_override`) that kicks in before any LLM decision is used. This ensures that real-time, live, and current-event queries are always correctly routed to web search — even if the LLM classifier mistakes them for general conversation.
+
+**Supported trigger phrases (Indonesian):**
+```
+cari di internet / carikan di internet / cari di web / cari di google
+berita terkini / berita hari ini / kabar terbaru / info terbaru
+cuaca hari ini / prakiraan cuaca / harga saham / kurs dollar
+siapa presiden / siapa perdana menteri / berapa harga
+cari tau tentang / cari tahu tentang / tolong cari / tolong carikan
+apa yang terjadi di / situasi terkini / kondisi saat ini
+perkembangan terkini / perkembangan terbaru
+```
+
+**Supported trigger phrases (English):**
+```
+search the web / search for / look up / google / browse the web
+find info about / find out about
+what is the latest / what's happening in / what happened to
+current situation / current status / breaking news / latest news
+weather today / weather forecast / current price of / stock price of
+news about / news on / who is the current / who is currently
+```
+
+After matching a trigger, the system automatically **cleans the query** by stripping command prefixes (`tolong cari`, `search web`, `look up`, etc.) and trailing punctuation, then injects the clean query into the search action.
 
 ### Terminal Status Badges
 
@@ -544,28 +607,59 @@ LLM #1 is optimized for low-latency JSON routing (<300ms). It interprets user in
 
 ---
 
-## 13. Acoustic Intelligence Layer
+## 13. Web Search Engine
+
+`utils/web_search.py` implements a **4-engine ISP-resilient fallback pipeline** with zero API keys required.
+
+### Engine Fallback Chain
+
+| Priority | Engine | Method | Best For |
+|----------|--------|--------|----------|
+| 1st | **Bing Search** | HTML scraping (`lxml`) | General queries, reliable, widely unblocked |
+| 2nd | **Google News RSS** | RSS feed parsing | Current events, breaking news, real-time information |
+| 3rd | **DuckDuckGo Lite** | HTML scraping (`httpx`) | Privacy-first fallback |
+| 4th | **Wikipedia API** | JSON API | Factual / knowledge-base queries |
+
+Each engine is wrapped in its own `try/except`. If one fails (blocked by ISP, network issue, rate limit), the next engine in the chain is tried **automatically** — no manual intervention.
+
+### Search Indicator (CLI)
+
+While a search is in progress, both `run` mode and `text` mode display an animated CLI indicator:
+
+```
+🔍 Searching web: "program MBG"...
+```
+
+This is powered by the `WEB_SEARCHING` event emitted from the action dispatcher, which the CLI handler picks up via the event bus and renders as an animated spinner. The indicator updates with the actual query being searched.
+
+---
+
+## 14. Acoustic Intelligence Layer
 
 1. **Auto-Calibrated Noise Floor**: Measures ambient background noise for 0.8s on startup and establishes an adaptive noise threshold (`threshold = noise_dbfs + 8.0 dB`, clamped between `-38.0` and `-20.0 dBFS`).
 2. **Acoustic Gate (dBFS / RMS)**: Pre-VAD zero-copy energy filter. Frames below the threshold (silence, fan hum, HVAC) are instantly dropped (100% discarded) before reaching the VAD queue, saving CPU compute.
-3. **Hold-Frames (Hangover Buffer)**: 15-frame (~450ms) buffer prevents trailing consonants and fading word endings from getting clipped.
+3. **Hold-Frames (Hangover Buffer)**: 20-frame (~600ms) buffer prevents trailing consonants and fading word endings from getting clipped.
 4. **Dynamic TTS Playback Clamping**: During TTS playback, dynamically tracks speaker output energy and raises the gate threshold +10.0 dB above speaker baseline with an 8-frame pre-roll shield, eliminating mic echo and self-interruption.
 5. **CalibrationAEC**: 3-second room impulse response calibration with LMS/Wiener filtering for acoustic echo cancellation.
+6. **Whisper Hallucination Guard**: Short or silent audio segments can cause Whisper to emit garbage text (e.g. `"Terima kasih."`). These known hallucinations are filtered at both the STT streaming level (`stt/whisper_client.py`) and the pipeline gate level (`core/pipeline.py`) before reaching the LLM.
 
 ---
 
-## 14. Bilingual Language Routing
+## 15. Bilingual Language Routing
 
-1. **Audio Language Classifier**: faster-whisper probabilities with 3x Indonesian bias correction.
-2. **Text-Level Verification**: `_verify_text_language()` checks text tokens to resolve Whisper "In-" word misclassifications.
-3. **Per-Turn Directive**: Context Manager injects explicit `[Spoken Language: English / Indonesian]` prompt directives.
-4. **Hybrid Voice Engine**:
-   - English text -> Kokoro TTS (`af_heart`, 24kHz)
-   - Indonesian text -> Piper TTS (`id_ID-news_tts-medium`, 22.05kHz -> 24kHz resampled)
+Language is **manually controlled** rather than auto-detected. The active language determines which TTS engine is used.
+
+1. **Default language**: Set in `config/sorachio.yaml` under `system.language` (`"en"` or `"id"`).
+2. **Runtime toggle in `run` mode**: Toggle language with the **`L` key** in voice mode (switches between EN and ID).
+3. **Runtime toggle in `text` mode**: Use the `/lang en` or `/lang id` commands.
+4. **Per-Turn Directive**: Context Manager injects explicit `[Spoken Language: English / Indonesian]` prompt directives to ensure LLM2 replies in the correct language.
+5. **Hybrid Voice Engine**:
+   - English → Kokoro TTS (`af_heart`, 24kHz)
+   - Indonesian → Piper TTS (`id_ID-news_tts-medium`, 22.05kHz → 24kHz resampled)
 
 ---
 
-## 15. Streaming Pipeline Explained
+## 16. Streaming Pipeline Explained
 
 ```
 LLM #2 output:  "Hello " -> "there! " -> "I " -> "am " -> "ready."
@@ -581,7 +675,7 @@ First audio chunk is played within **0.5 – 1.2 seconds** of LLM start.
 
 ---
 
-## 16. Memory Architecture
+## 17. Memory Architecture
 
 - **Short-Term Memory (STM)**: Rolling 20-message in-memory deque.
 - **Long-Term Memory (LTM)**: Persistent JSON fact database (`data/memory/ltm.json`).
@@ -590,12 +684,48 @@ First audio chunk is played within **0.5 – 1.2 seconds** of LLM start.
 
 ---
 
-## 17. CLI Reference
+## 18. Text Mode Reference
+
+Text mode (`python main.py text`) provides a full keyboard-driven interface to interact with Sorachio without a microphone.
+
+### Starting Text Mode
+
+```bash
+# Text mode — TTS disabled by default (text responses only)
+python main.py text
+
+# Text mode with TTS enabled from startup
+python main.py text --tts
+
+# Text mode — single query and exit
+python main.py text --message "search web for Python news"
+```
+
+### In-Chat Commands
+
+| Command | Action |
+|---------|--------|
+| `/tts` | Toggle voice TTS output on/off |
+| `/lang en` | Switch to English (Kokoro TTS) |
+| `/lang id` | Switch to Indonesian (Piper TTS) |
+| `/help` | Show all available commands |
+
+**TTS status** is shown at the top of the text mode header:
+```
+Voice TTS: ON  • Commands: /tts (toggle voice), /lang [en|id] (switch language)
+```
+
+> **Note**: In text mode, TTS is **off by default**. This keeps the mode focused on text interaction. Enable it with `/tts` or `--tts` flag when you want audio playback alongside text responses.
+
+---
+
+## 19. CLI Reference
 
 ```bash
 # Main Modes
 python main.py run          # Voice Mode with Wake Word
-python main.py text         # Keyboard CLI Mode
+python main.py text         # Keyboard CLI Mode (TTS off by default)
+python main.py text --tts   # Keyboard CLI Mode with TTS enabled
 
 # Testing
 python main.py test-stt     # Test Whisper STT
@@ -619,7 +749,7 @@ python mbg.py --models      # Download/verify model weights only
 
 ---
 
-## 18. MBG System
+## 20. MBG System
 
 **MBG (Master Bootstrap Guardian)** automates system initialization and health checks:
 - Python 3.10 – 3.12 environment verification & auto-relaunch
@@ -630,7 +760,7 @@ python mbg.py --models      # Download/verify model weights only
 
 ---
 
-## 19. Troubleshooting
+## 21. Troubleshooting
 
 ### "Binary not found" / llama-server missing
 On Windows: binary must be `llama-server.exe` in `bin/`. Run `python mbg.py --check` to verify.
@@ -639,10 +769,35 @@ On Windows: binary must be `llama-server.exe` in `bin/`. Run `python mbg.py --ch
 Ensure `audio/wakeword.py` deep reset is active. `WakeWordDetector.reset()` clears all preprocessor buffers on active timeout to eliminate ghost triggers.
 
 ### Sorachio interrupts itself during playback
-The Playback Gate Shield holds the threshold at `max(-15.0 dBFS, speaker_peak + 7.0 dB)`. If self-interruption occurs, raise the minimum in `audio/capture.py`:
+Barge-in is disabled by default (`enable_interruption: false`). If self-interruption occurs in headphone setups where barge-in is enabled, raise the minimum threshold in `audio/capture.py`:
 ```python
 playback_thresh = max(-13.0, self._speaker_baseline_dbfs + 7.0)
 ```
+Alternatively, keep `enable_interruption: false` in `config/sorachio.yaml` for open-speaker setups.
+
+### Web search returns no results
+The engine uses a 4-step fallback (Bing → Google News RSS → DuckDuckGo → Wikipedia). If all fail, it's a network connectivity issue. Check:
+```bash
+curl -I https://www.bing.com
+curl -I "https://news.google.com/rss/search?q=test"
+```
+The CLI will show `🔍 Searching web: "..."` with an animated spinner while the search is in progress — this confirms the search action was triggered even if results come back empty.
+
+### Speech is being cut off mid-sentence
+Increase `silence_timeout_ms` in `config/sorachio.yaml`:
+```yaml
+audio:
+  capture:
+    silence_timeout_ms: 900    # Was 700ms — increase to allow longer pauses
+    min_speech_duration_ms: 450
+```
+
+### STT transcribes garbage / "Terima kasih." noise
+This is a Whisper hallucination on short/silent audio. It is filtered at two levels:
+1. **Streaming level** (`stt/whisper_client.py`): Segments matching known hallucinations are dropped before emission.
+2. **Pipeline level** (`core/pipeline.py`): Final STT result is validated before dispatching to LLM.
+
+If new hallucination strings appear, add them to the filter list in `stt/whisper_client.py`.
 
 ### "LLM server not responding"
 ```bash
@@ -672,7 +827,7 @@ audio:
 
 ---
 
-## 20. Future Robotics Expansion
+## 22. Future Robotics Expansion
 
 Sorachio-STS is designed to act as the primary brain of an autonomous companion robot, adaptable across standard PCs, laptops, and various Single Board Computers (SBCs) connected to microcontrollers:
 
