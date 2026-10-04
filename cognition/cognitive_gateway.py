@@ -499,6 +499,11 @@ class CognitiveGateway:
         if not query:
             query = transcript.strip()
 
+        # Clean trailing punctuation from query (e.g., 'Palestine situation?' -> 'Palestine situation')
+        query = re.sub(r"[?!.,;]+$", "", query).strip()
+        if not query:
+            query = transcript.strip()
+
         log.info(
             f"[Gateway] ⚠️ Search keyword override: forced action=search, query={query!r}"
         )
