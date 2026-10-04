@@ -29,8 +29,12 @@ env.bak
 venv.bak
 .pytest_cache/
 .coverage
+.coverage.*
+htmlcov/
 .cache
-.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
 
 # Local configuration / env vars
 .env
@@ -119,4 +123,6 @@ audio/proofs/
 **/proofs/
 src/
 _fix_apa7_*.py
+.verifier_run_output.txt
 .verifier_run_output_*.txt
+.verifier_run_output*

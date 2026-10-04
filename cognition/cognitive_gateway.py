@@ -99,17 +99,22 @@ JSON Schema:
 }
 
 Action Rules:
-- "conversation": General chat, questions, greetings, or when no physical movement/camera/search is needed.
+- "conversation": General chat, greetings, opinions, philosophy, jokes, or historical/established knowledge that does not require live information.
 - "move": Commands to move, drive, turn, rotate, stop (e.g., "maju 2 meter"). Set robot_params.
 - "look": Commands asking to see/describe objects via camera (e.g., "lihat ini"). Set vision_params.
 - "remember": Storing crucial facts about user (e.g., "ingat nama teman saya"). Set store_memory=true.
-- "search": Live web search, current facts, news, queries asking to search or find information (e.g., "cari di internet...", "search for...", "search web...", "carikan info...", "cari info...", "berita terkini", "siapa presiden..."). MUST set search_params.query to the core search query. THIS IS CRITICAL — if user says to search the web, action MUST be "search".
+- "search": Real-time web search, breaking news, current situations, recent events, weather, stock prices, live data, or queries asking to search/find information (e.g., "what is the current situation...", "what happened today...", "latest news about...", "cari di internet...", "search for...", "berita terkini", "siapa presiden..."). ALWAYS choose "search" whenever the question concerns current, ongoing, recent, or live real-world facts. Set search_params.query to the core search topic.
 - "multi": Utterances requiring multiple sequential actions. Put subactions in list.
 
 Examples:
 "Halo Sorachio, apa kabar?"
 → {"action":"conversation","topic":"greeting","emotion":"happy","store_memory":false,"importance":0.2,
    "memory_queries":[],"robot_params":null,"vision_params":null,"search_params":null,"subactions":[]}
+
+"What is the current Vietnam situation?"
+→ {"action":"search","topic":"current_events","emotion":"curious","store_memory":false,"importance":0.5,
+   "memory_queries":[],"robot_params":null,"vision_params":null,
+   "search_params":{"query":"Vietnam situation"},"subactions":[]}
 
 "Maju ke depan 2 detik"
 → {"action":"move","topic":"movement","emotion":"neutral","store_memory":false,"importance":0.3,
@@ -415,31 +420,44 @@ class CognitiveGateway:
     # -----------------------------------------------------------------------
 
     # Strong search-intent patterns (Indonesian + English)
-    # NOTE: Keep SPECIFIC to avoid false positives on normal conversation.
+    # Covers explicit commands as well as real-time, live, news, and current status inquiries.
     _SEARCH_KEYWORDS: tuple[str, ...] = (
-        # Indonesian — explicit search commands
+        # Indonesian — explicit commands & live information
         "cari di internet", "carikan di internet", "cari di web", "carikan di web",
         "cari di google", "carikan di google",
         "cari info", "carikan info", "cari informasi", "carikan informasi",
-        "search web", "search the web", "search the internet", "search di internet", "search di google",
-        "berita terkini", "berita hari ini", "kabar terbaru",
+        "search web", "search di internet", "search di google",
+        "berita terkini", "berita hari ini", "kabar terbaru", "kabar terkini",
         "info terbaru", "update terbaru",
-        "siapa presiden", "berapa harga",
+        "siapa presiden", "siapa perdana menteri", "berapa harga", "harga saham", "kurs dollar",
+        "cuaca hari ini", "prakiraan cuaca",
         "cari tau tentang", "cari tahu tentang", "cari tau", "cari tahu",
         "tolong cari", "tolong carikan", "coba cari", "coba carikan",
-        # English — explicit search commands
-        "search the web", "search the internet",
-        "search for", "look up",
-        "find info about", "find information about",
-        "what is the latest news", "browse the web",
-        "current news about",
+        "apa yang terjadi di", "apa yang sedang terjadi di", "ada apa di",
+        "situasi terkini", "kondisi terkini", "kondisi saat ini", "situasi saat ini",
+        "perkembangan terkini", "perkembangan terbaru",
+
+        # English — explicit commands, live info, & current status
+        "search the web", "search the internet", "search web", "search for",
+        "look up", "google for", "google",
+        "find info about", "find information about", "find out about",
+        "what is the latest news", "what is the latest", "what is happening in",
+        "what's happening in", "what happened to", "what happened today in",
+        "what is the current", "what's the current",
+        "current situation", "current status", "current condition", "current news",
+        "latest news", "latest update", "latest updates", "breaking news",
+        "who is the president", "who is the current", "who is currently",
+        "how much is the price", "current price of", "stock price of",
+        "weather today in", "weather forecast", "today's weather",
+        "browse the web", "current news about", "tell me about the current",
+        "news about", "news on",
     )
 
     def _apply_search_override(self, transcript: str, decision: dict[str, Any]) -> dict[str, Any]:
         """Force action='search' when transcript contains unambiguous search-intent keywords.
 
-        This is a deterministic safety net because small 0.5B models frequently
-        mis-classify explicit search requests as 'conversation'.
+        This is a deterministic safety net for real-time and search-intent queries
+        that local models might otherwise classify as general conversation.
         """
         t_lower = transcript.lower().strip()
 
@@ -451,16 +469,20 @@ class CognitiveGateway:
         # Clean query by stripping search triggers and leading connectors iteratively
         query = transcript.strip()
         pattern = (
-            r"^(?:(?:tolong|coba|please|can\s+you)\s+)?"
+            r"^(?:(?:tolong|coba|please|can\s+you|could\s+you)\s+)?"
             r"(?:search(?:\s+(?:the|di))?\s+(?:web|internet|google)|search\s+for|"
             r"cari(?:kan)?(?:\s+(?:info(?:rmasi)?|tau|tahu))?(?:\s+di\s+(?:internet|web|google))?|"
-            r"look\s+up|find(?:\s+information|\s+info)?(?:\s+about)?)\s*"
+            r"look\s+up|google(?:\s+for)?|find(?:\s+information|\s+info|\s+out)?(?:\s+about)?|"
+            r"what\s+is\s+the\s+latest\s+news\s+(?:on|about)|what(?:\'s|\s+is)\s+the\s+current|"
+            r"what(?:\'s|\s+is)\s+happening\s+in|what\s+happened\s+to|what\s+happened\s+today\s+in|"
+            r"apa\s+yang\s+(?:sedang\s+)?terjadi\s+di|ada\s+apa\s+di|"
+            r"tell\s+me\s+about\s+the\s+current)\s*"
         )
         for _ in range(3):
             new_q = re.sub(pattern, "", query, flags=re.IGNORECASE).strip()
             # Strip connector words
             new_q = re.sub(
-                r"^(?:soal|tentang|for|about|mengenai|untuk|pada|terkait|di\s+(?:internet|web|google))\s+",
+                r"^(?:soal|tentang|for|about|mengenai|untuk|pada|terkait|di\s+(?:internet|web|google)|di)\s+",
                 "",
                 new_q,
                 flags=re.IGNORECASE,
